@@ -148,7 +148,7 @@ body::before {
 .c-red::after { background: var(--red); } .c-red .m-val { color: var(--red); }
 .c-green::after { background: var(--green); } .c-green .m-val { color: var(--green); }
 .c-amber::after { background: var(--amber); } .c-amber .m-val { color: var(--amber); }
-.c-blue::after { background: var(--blue); } .c-blue .m-val { color: var(--blue); }
+.c-blue::after { background: var(--blue); } .c-blue .m-val { color: #ffffff; }
 .c-purple::after { background: var(--accent); } .c-purple .m-val { color: var(--accent-l); }
 .c-teal::after { background: var(--teal); } .c-teal .m-val { color: var(--teal); }
 

@@ -166,7 +166,7 @@ function renderDashboard(txns) {
     { lbl: 'Total credits',   val: fmtAmt(totalC, { maximumFractionDigits: 0 }),              note: credits.length + ' transactions',                              cls: 'c-green'  },
     { lbl: 'Net outflow',     val: fmtAmt(Math.abs(net), { maximumFractionDigits: 0 }),       note: net < 0 ? 'Spent more than received' : 'Surplus this period',  cls: net < 0 ? 'c-amber' : 'c-teal' },
     { lbl: 'Avg payment',     val: fmtAmt(Math.round(avg)),                                   note: 'Per debit',                                                   cls: 'c-purple' },
-    { lbl: 'Transactions',    val: txns.length,                                               note: 'Debits + credits',                                            cls: 'c-blue'   },
+    { lbl: 'Transactions',    val: `<span class="mv-int">${txns.length}</span>`,              note: 'Debits + credits',                                            cls: 'c-blue'   },
     { lbl: 'Largest payment', val: fmtAmt(maxT.amount || 0, { maximumFractionDigits: 0 }),    note: (maxT.name || '').slice(0, 18),                                cls: 'c-red'    }
   ];
   document.getElementById('metricStrip').innerHTML = ms.map(m => `
@@ -487,7 +487,7 @@ function renderTxnTable(txns, filter) {
     const cat = t.type === 'Credit' ? 'Income / received' : t.category;
     const col = catColor(cat);
     return `<tr>
-      <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3);white-space:nowrap;">${t.date}<br>${t.time}</td>
+      <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#ececf1;white-space:nowrap;">${t.date}<br>${t.time}</td>
       <td style="font-weight:500;max-width:200px;">${t.name}</td>
       <td><span class="cat-tag" style="background:${cat === 'Income / received' ? '#1a3a2a' : '#2d2d52'};color:${cat === 'Income / received' ? '#4ade80' : '#a5b4fc'};">${cat}</span></td>
       <td><span class="pill ${t.type === 'Debit' ? 'pill-debit' : 'pill-credit'}">${t.type}</span></td>
