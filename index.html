@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpendLens — PhonePe Analytics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- UPLOAD -->
+<div id="upload-screen">
+  <div class="upload-glow"></div>
+  <div class="upload-badge">SpendLens · PhonePe Analytics</div>
+  <h1 class="upload-title">Know where every<br>rupee went</h1>
+  <p class="upload-sub">Upload your PhonePe statement PDF for instant spending analytics — everything runs in your browser.</p>
+
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">📄</div>
+    <div class="drop-title">Drop your PhonePe PDF</div>
+    <div class="drop-hint">or click anywhere to browse</div>
+    <input type="file" id="fileInput" accept=".pdf" style="display:none;">
+    <span class="btn-primary">Choose file</span>
+  </div>
+
+  <div class="upload-tags">
+    <span>✓ PhonePe statements</span>
+    <span>✓ Runs in browser</span>
+    <span>✓ Private & secure</span>
+    <span>✓ AI-powered insights</span>
+  </div>
+</div>
+
+<!-- LOADING -->
+<div id="loading-screen" style="display:none; min-height:100vh; flex-direction:column; align-items:center; justify-content:center; gap:1.25rem; z-index:1; position:relative;">
+  <div class="spin"></div>
+  <div id="loaderText" class="mono" style="font-size:13px; color:var(--t2);">Reading your PDF...</div>
+</div>
+
+<!-- DASHBOARD -->
+<div id="dashboard">
+  <div class="topbar">
+    <div class="topbar-logo">SpendLens</div>
+    <div class="topbar-meta" id="topbarMeta">—</div>
+    <button class="btn-ghost" onclick="resetApp()">↑ New upload</button>
+  </div>
+
+  <div class="dash">
+    <div class="sec"><span>Overview</span></div>
+    <div class="metrics" id="metricStrip"></div>
+
+    <div class="sec"><span>Spending breakdown</span></div>
+    <div class="g2">
+      <div class="card">
+        <div class="card-title">Category distribution</div>
+        <div class="card-sub">By total debit amount</div>
+        <div style="position:relative; height:240px;"><canvas id="donutChart"></canvas></div>
+        <div id="donutLegend" style="margin-top:0.9rem; display:flex; flex-wrap:wrap; gap:7px;"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Category breakdown</div>
+        <div class="card-sub">Ranked by spend</div>
+        <div class="cat-bars" id="catBars" style="margin-top:0.25rem;"></div>
+      </div>
+    </div>
+
+    <div class="sec"><span>Spending over time</span></div>
+    <div class="card">
+      <div class="card-title">Daily spending trend</div>
+      <div class="card-sub">Debit amount per day</div>
+      <div style="position:relative; height:200px;"><canvas id="lineChart"></canvas></div>
+    </div>
+
+    <div class="sec"><span>Top transactions & vendors</span></div>
+    <div class="g2">
+      <div class="card">
+        <div class="card-title">10 largest payments</div>
+        <div class="card-sub">Highest individual debits</div>
+        <div id="topTxnList" style="margin-top:0.25rem;"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Most frequent vendors</div>
+        <div class="card-sub">By transaction count</div>
+        <div id="vendorList" style="margin-top:0.25rem;"></div>
+      </div>
+    </div>
+
+    <div class="sec"><span>Patterns & budgets</span></div>
+    <div class="g2">
+      <div class="card">
+        <div class="card-title">Spending by hour</div>
+        <div class="card-sub">When do you spend most?</div>
+        <div style="position:relative; height:180px;"><canvas id="hourChart"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Suggested monthly limits</div>
+        <div class="card-sub">75% of current spend as target</div>
+        <div id="budgetList" style="margin-top:0.25rem; display:flex; flex-direction:column; gap:9px;"></div>
+      </div>
+    </div>
+
+    <div class="sec"><span>All transactions</span></div>
+    <div class="card">
+      <div class="filters" id="filterRow"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Recipient / Sender</th><th>Category</th><th>Type</th><th style="text-align:right;">Amount</th></tr></thead>
+          <tbody id="txnBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="sec"><span>AI Analysis</span></div>
+    <div class="ai-card">
+      <div class="ai-header">
+        <div class="ai-badge">AI · GPT-4o mini</div>
+        <div class="ai-model">powered by OpenAI</div>
+      </div>
+      <div class="ai-body">
+        <div class="ai-loading" id="aiLoading" style="display:none;">
+          <div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div>
+          <span style="margin-left:4px;">Analysing your spending...</span>
+        </div>
+        <div id="aiText" style="color:var(--t3); font-size:12px;">AI analysis will appear here after your PDF is processed.</div>
+      </div>
+    </div>
+
+    <div class="sec"><span>Behavior insights</span></div>
+    <div class="insight-grid" id="insightGrid"></div>
+
+    <div class="sec"><span>Anomaly detection</span></div>
+    <div id="anomalyList"></div>
+
+    <div class="sec"><span>Financial health score</span></div>
+    <div class="score-card" id="scoreCard"></div>
+
+    <div style="height:3rem;"></div>
+  </div>
+</div>
+
+<!-- Password modal -->
+<div id="pwdOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(8,8,13,0.88);backdrop-filter:blur(6px);align-items:center;justify-content:center;">
+  <div style="background:var(--s2);border:1px solid var(--b2);border-radius:var(--r);padding:2rem;width:min(380px,90vw);box-shadow:0 24px 60px rgba(0,0,0,0.5);">
+    <div style="font-size:1.5rem;margin-bottom:0.4rem;">🔒</div>
+    <div style="font-weight:600;font-size:1rem;margin-bottom:0.3rem;">PDF is password-protected</div>
+    <div id="pwdHint" style="font-size:12px;color:var(--t2);margin-bottom:1.2rem;">Enter the password to unlock this document.</div>
+    <input id="pwdInput" type="password" placeholder="Password" autocomplete="current-password"
+      style="width:100%;background:var(--s3);border:1px solid var(--b2);border-radius:var(--rs);padding:0.6rem 0.8rem;color:var(--t1);font-size:14px;outline:none;margin-bottom:1rem;">
+    <div style="display:flex;gap:0.7rem;">
+      <button id="pwdCancel" style="flex:1;padding:0.6rem;border:1px solid var(--b2);background:transparent;color:var(--t2);border-radius:var(--rs);cursor:pointer;font-size:13px;">Cancel</button>
+      <button id="pwdSubmit" style="flex:2;padding:0.6rem;border:none;background:var(--accent);color:#fff;border-radius:var(--rs);cursor:pointer;font-size:13px;font-weight:600;">Unlock PDF</button>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
