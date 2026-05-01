@@ -88,7 +88,8 @@ async function parsePDF(file) {
     const c = await p.getTextContent();
     text += c.items.map(x => x.str).join(' ') + '\n';
   }
-  return extractTransactions(text);
+  appSource = detectSource(text);
+  return appSource === 'gpay' ? extractGPayTransactions(text) : extractTransactions(text);
 }
 
 function extractTransactions(text) {
@@ -133,11 +134,65 @@ function extractTransactions(text) {
   return txns.sort((a, b) => a.dateObj - b.dateObj);
 }
 
+// ── Source detection ──
+function detectSource(text) {
+  if (/google pay/i.test(text) || /UPI Transaction ID:/i.test(text)) return 'gpay';
+  return 'phonpe';
+}
+
+// ── GPay parser ──
+const GPAY_MONTHS = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9,Nov:10,Dec:11};
+
+function parseGPayDateObj(dateStr, timeStr) {
+  const dm = dateStr.match(/(\d{1,2}) (\w{3}), (\d{4})/);
+  if (!dm) return new Date();
+  const [, day, mon, year] = dm;
+  const d = new Date(+year, GPAY_MONTHS[mon] ?? 0, +day);
+  const tm = timeStr.match(/(\d{1,2}):(\d{2}) ([AP]M)/);
+  if (tm) {
+    let h = +tm[1];
+    if (tm[3] === 'PM' && h !== 12) h += 12;
+    if (tm[3] === 'AM' && h === 12) h = 0;
+    d.setHours(h, +tm[2], 0, 0);
+  }
+  return d;
+}
+
+function extractGPayTransactions(text) {
+  const txns = [];
+  const combined = text.replace(/\s+/g, ' ');
+  console.log('[SpendLens] GPay text (first 3000 chars):\n', combined.slice(0, 3000));
+
+  // DD Mon, YYYY HH:MM AM/PM Paid to/Received from/Self transfer to NAME UPI Transaction ID: NNNN Paid by BANK XXXX ₹AMOUNT
+  const pat = /(\d{1,2} \w{3}, \d{4}) (\d{1,2}:\d{2} [AP]M) ((?:Paid to|Received from|Self transfer to) .+?) UPI Transaction ID: \d+ Paid by [^₹]+(₹[\d,]+(?:\.\d+)?)/g;
+  let m;
+  while ((m = pat.exec(combined)) !== null) {
+    const fullDesc = m[3].trim();
+    if (/^Self transfer to/i.test(fullDesc)) continue;
+
+    const type = /^Received from/i.test(fullDesc) ? 'Credit' : 'Debit';
+    const name = fullDesc.replace(/^(?:Paid to|Received from)\s+/i, '').trim();
+    const amount = parseFloat(m[4].replace('₹', '').replace(/,/g, ''));
+    if (!name || isNaN(amount)) continue;
+
+    const dateStr = m[1]; // "01 Apr, 2026"
+    const timeStr = m[2];
+    // Format date as "Apr 01, 2026" so new Date() parses it reliably in the dashboard
+    const dm2 = dateStr.match(/(\d{1,2}) (\w{3}), (\d{4})/);
+    const fmtDate = dm2 ? `${dm2[2]} ${dm2[1].padStart(2, '0')}, ${dm2[3]}` : dateStr;
+    txns.push({ date: fmtDate, time: timeStr, dateObj: parseGPayDateObj(dateStr, timeStr), name, type, amount, category: type === 'Credit' ? 'Income / received' : categorize(name) });
+  }
+
+  console.log('[SpendLens] GPay parsed', txns.length, 'transactions');
+  return txns.sort((a, b) => a.dateObj - b.dateObj);
+}
+
 // ── State ──
-let allTxns = [], activeFilter = 'All', charts = {};
+let allTxns = [], activeFilter = 'All', charts = {}, appSource = '';
 
 function resetApp() {
   allTxns = [];
+  appSource = '';
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e){} });
   charts = {};
   document.getElementById('upload-screen').style.display = 'flex';
@@ -158,7 +213,10 @@ function renderDashboard(txns) {
   const d1      = dates.length ? new Date(Math.max(...dates)) : new Date();
   const fmt     = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
-  document.getElementById('topbarMeta').textContent = `${fmt(d0)} — ${fmt(d1)} · ${txns.length} transactions`;
+  const sourceBadge = appSource === 'gpay'
+    ? '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;background:rgba(66,133,244,0.18);color:#4285f4;margin-right:8px;">GPay</span>'
+    : '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:20px;background:rgba(99,60,180,0.18);color:#a78bfa;margin-right:8px;">PhonePe</span>';
+  document.getElementById('topbarMeta').innerHTML = `${sourceBadge}${fmt(d0)} — ${fmt(d1)} · ${txns.length} transactions`;
 
   // Metrics
   const ms = [

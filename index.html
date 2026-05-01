@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SpendLens — PhonePe Analytics</title>
+<title>SpendLens — UPI Analytics</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -14,20 +14,21 @@
 <!-- UPLOAD -->
 <div id="upload-screen">
   <div class="upload-glow"></div>
-  <div class="upload-badge">SpendLens · PhonePe Analytics</div>
+  <div class="upload-badge">SpendLens · UPI Analytics</div>
   <h1 class="upload-title">Know where every<br>rupee went</h1>
-  <p class="upload-sub">Upload your PhonePe statement PDF for instant spending analytics — everything runs in your browser.</p>
+  <p class="upload-sub">Upload your PhonePe or Google Pay statement PDF for instant spending analytics — everything runs in your browser.</p>
 
   <div class="drop-zone" id="dropZone">
     <div class="drop-icon">📄</div>
-    <div class="drop-title">Drop your PhonePe PDF</div>
-    <div class="drop-hint">or click anywhere to browse</div>
+    <div class="drop-title">Drop your statement PDF</div>
+    <div class="drop-hint">PhonePe or Google Pay · or click to browse</div>
     <input type="file" id="fileInput" accept=".pdf" style="display:none;">
     <span class="btn-primary">Choose file</span>
   </div>
 
   <div class="upload-tags">
     <span>✓ PhonePe statements</span>
+    <span>✓ Google Pay statements</span>
     <span>✓ Runs in browser</span>
     <span>✓ Private & secure</span>
     <span>✓ AI-powered insights</span>
