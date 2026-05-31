@@ -4,8 +4,19 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SpendLens — UPI Analytics</title>
+<script>
+// Runs synchronously before any body element is painted.
+// If a valid session exists, inject a style rule that hides the upload screen
+// before the browser renders it — zero flash on reload.
+!function(){try{var d=JSON.parse(sessionStorage.getItem('spendlens_session')||'null');
+if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
+  var s=document.createElement('style');s.id='ss-hide';
+  s.textContent='#upload-screen{display:none}';
+  document.head.appendChild(s);}}catch(e){}}();
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -46,7 +57,10 @@
   <div class="topbar">
     <div class="topbar-logo">SpendLens</div>
     <div class="topbar-meta" id="topbarMeta">—</div>
-    <button class="btn-ghost" onclick="resetApp()">↑ New upload</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button class="btn-ghost" id="dlBtn" style="display:none;" onclick="downloadExcel()">↓ Excel</button>
+      <button class="btn-ghost" onclick="resetApp()">↑ New upload</button>
+    </div>
   </div>
 
   <div class="dash">
@@ -86,6 +100,32 @@
         <div class="card-title">Most frequent vendors</div>
         <div class="card-sub">By transaction count</div>
         <div id="vendorList" style="margin-top:0.25rem;"></div>
+      </div>
+    </div>
+
+    <div class="sec"><span>Cumulative spend</span></div>
+    <div class="card">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;margin-bottom:0.75rem;">
+        <div style="min-width:0;">
+          <div class="card-title">How fast did you spend? — Cumulative spend day by day</div>
+          <div class="card-sub" id="cumulSub">Running total of debits from day 1 — steeper slope = faster burn rate</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;align-items:flex-end;">
+          <div style="display:flex;gap:5px;">
+            <button id="cumulDebitBtn"  class="chip" onclick="setCumulMode('debit')">Debit</button>
+            <button id="cumulCreditBtn" class="chip" onclick="setCumulMode('credit')">Credit</button>
+          </div>
+          <div style="display:flex;gap:5px;">
+            <button id="cumulRange1w"  class="chip" onclick="setCumulRange('1w')">1W</button>
+            <button id="cumulRange2w"  class="chip" onclick="setCumulRange('2w')">2W</button>
+            <button id="cumulRange1m"  class="chip" onclick="setCumulRange('1m')">1M</button>
+            <button id="cumulRangeAll" class="chip" onclick="setCumulRange('all')">All</button>
+          </div>
+        </div>
+      </div>
+      <div style="position:relative; height:220px;">
+        <canvas id="cumulChart"></canvas>
+        <canvas id="cumulCrosshair" style="position:absolute;top:0;left:0;pointer-events:none;"></canvas>
       </div>
     </div>
 

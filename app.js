@@ -1,4 +1,14 @@
-// OPENAI_KEY is loaded from config.js
+// OPENAI_KEY is defined in config.js (gitignored)
+
+// BUG 7 fix: escape HTML in all user-data strings before innerHTML insertion
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 if (typeof pdfjsLib === 'undefined' || typeof Chart === 'undefined') {
   document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:1rem;font-family:monospace;color:#ff5c5c;background:#08080d;padding:2rem;text-align:center;"><div style="font-size:1.5rem;">⚠ Failed to load libraries</div><div style="color:#8888a0;font-size:13px;">PDF.js or Chart.js did not load. Check your internet connection and reload the page.</div></div>';
@@ -8,6 +18,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 
 const INR0 = n => n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 const INR2 = n => n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Consistent YYYY-MM-DD key for date lookups across both PhonePe and GPay date string formats
+const toIso = d => (d && !isNaN(+d))
+  ? d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+  : '';
 
 function fmtAmt(n, opts = {}) {
   const s = n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0, ...opts });
@@ -71,23 +85,47 @@ function showPasswordModal(reason) {
 async function parsePDF(file) {
   const buf = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: buf });
+  let cancelled = false;
 
   loadingTask.onPassword = async (updatePassword, reason) => {
     try {
       const pwd = await showPasswordModal(reason);
       updatePassword(pwd);
     } catch {
+      cancelled = true;
       loadingTask.destroy();
     }
   };
 
-  const pdf = await loadingTask.promise;
+  // BUG 1 fix: destroy() rejects loadingTask.promise with an internal engine error,
+  // not '__cancelled__'. Catch it here and re-throw with the sentinel string.
+  let pdf;
+  try {
+    pdf = await loadingTask.promise;
+  } catch (e) {
+    if (cancelled) throw new Error('__cancelled__');
+    throw e;
+  }
+
+  const loader = document.getElementById('loaderText');
   let text = '';
   for (let i = 1; i <= pdf.numPages; i++) {
+    // BUG 9 fix: show page progress so multi-page statements don't look frozen
+    if (pdf.numPages > 4) loader.textContent = `Reading page ${i} of ${pdf.numPages}...`;
     const p = await pdf.getPage(i);
     const c = await p.getTextContent();
     text += c.items.map(x => x.str).join(' ') + '\n';
   }
+
+  // BUG 5 fix: detect scanned/image-only PDFs before attempting regex parsing
+  if (text.trim().length < 200) {
+    throw new Error(
+      'This PDF has no extractable text — it appears to be a scanned image.\n\n' +
+      'SpendLens needs a digital statement with selectable text. ' +
+      'Download your statement directly from the PhonePe or Google Pay app.'
+    );
+  }
+
   appSource = detectSource(text);
   return appSource === 'gpay' ? extractGPayTransactions(text) : extractTransactions(text);
 }
@@ -111,7 +149,9 @@ function extractTransactions(text) {
     txns.push({ date: m[1], time: m[2], dateObj: new Date(m[1] + ' ' + m[2]), name, type, amount, category: type === 'Credit' ? 'Income / received' : categorize(name) });
   }
 
-  const walPat = /(\w+ \d{1,2}, \d{4}) (\d{1,2}:\d{2} [AP]M) (Money added[^D]+?) Debit INR ([\d,]+\.?\d*)/g;
+  // BUG 2 fix: [^D]+? blocked any description containing uppercase 'D'; .+? is safe
+  // because the lazy quantifier + literal " Debit INR" anchor stops at the right place.
+  const walPat = /(\w+ \d{1,2}, \d{4}) (\d{1,2}:\d{2} [AP]M) (Money added.+?) Debit INR ([\d,]+\.?\d*)/g;
   while ((m = walPat.exec(combined)) !== null) {
     const amount = parseFloat(m[4].replace(/,/g, ''));
     if (isNaN(amount)) continue;
@@ -145,7 +185,9 @@ const GPAY_MONTHS = {Jan:0,Feb:1,Mar:2,Apr:3,May:4,Jun:5,Jul:6,Aug:7,Sep:8,Oct:9
 
 function parseGPayDateObj(dateStr, timeStr) {
   const dm = dateStr.match(/(\d{1,2}) (\w{3}), (\d{4})/);
-  if (!dm) return new Date();
+  // BUG 8 fix: returning new Date() (now) on parse failure silently corrupts sort order
+  // and date-range display. Epoch (Jan 1 1970) makes bad data visibly obvious instead.
+  if (!dm) return new Date(0);
   const [, day, mon, year] = dm;
   const d = new Date(+year, GPAY_MONTHS[mon] ?? 0, +day);
   const tm = timeStr.match(/(\d{1,2}):(\d{2}) ([AP]M)/);
@@ -188,15 +230,86 @@ function extractGPayTransactions(text) {
 }
 
 // ── State ──
-let allTxns = [], activeFilter = 'All', charts = {}, appSource = '';
+let allTxns = [], activeFilter = 'All', charts = {}, appSource = '', cumulState = null;
 
 function resetApp() {
   allTxns = [];
   appSource = '';
   Object.values(charts).forEach(c => { try { c.destroy(); } catch(e){} });
   charts = {};
+  cumulState = null;
+  clearSession(); // explicit "new upload" clears persisted data
+  document.getElementById('dlBtn').style.display = 'none';
   document.getElementById('upload-screen').style.display = 'flex';
   document.getElementById('dashboard').style.display = 'none';
+}
+
+// ── Session persistence ──────────────────────────────────────────────────────
+// sessionStorage: scoped to the tab, cleared on browser close, no server needed.
+
+function saveSession() {
+  try {
+    sessionStorage.setItem('spendlens_session', JSON.stringify({
+      v: 1,
+      source: appSource,
+      txns: allTxns.map(t => ({
+        date:   t.date,   time:   t.time,
+        dateTs: t.dateObj ? +t.dateObj : null, // serialize Date as timestamp
+        name:   t.name,   type:   t.type,
+        amount: t.amount, category: t.category
+      }))
+    }));
+  } catch (e) {
+    console.warn('[SpendLens] sessionStorage write failed:', e.message);
+  }
+}
+
+function clearSession() {
+  try { sessionStorage.removeItem('spendlens_session'); } catch {}
+}
+
+function hydrateSession() {
+  // Parse — any malformed JSON clears the key and falls through to upload screen
+  let data = null;
+  try {
+    const raw = sessionStorage.getItem('spendlens_session');
+    if (raw) data = JSON.parse(raw);
+  } catch {
+    clearSession();
+  }
+
+  // Always remove the anti-flash style tag injected in the <head>,
+  // whether we restore successfully or fall back — display is now JS-controlled.
+  document.getElementById('ss-hide')?.remove();
+
+  if (!data || data.v !== 1 || !Array.isArray(data.txns) || !data.txns.length) {
+    if (data) clearSession(); // clear structurally wrong data; missing key is fine as-is
+    document.getElementById('upload-screen').style.display = 'flex';
+    return;
+  }
+
+  try {
+    appSource = data.source || 'phonpe';
+    allTxns   = data.txns.map(t => ({
+      date:    t.date,
+      time:    t.time,
+      dateObj: t.dateTs != null ? new Date(t.dateTs) : null,
+      name:    t.name,
+      type:    t.type,
+      amount:  t.amount,
+      category: t.category
+    }));
+    document.getElementById('upload-screen').style.display = 'none';
+    document.getElementById('dashboard').style.display     = 'block';
+    renderDashboard(allTxns);
+    window.scrollTo(0, 0);
+  } catch (e) {
+    console.error('[SpendLens] Session restore failed:', e);
+    clearSession();
+    allTxns = []; appSource = '';
+    document.getElementById('upload-screen').style.display = 'flex';
+    document.getElementById('dashboard').style.display     = 'none';
+  }
 }
 
 // ── Dashboard ──
@@ -209,8 +322,10 @@ function renderDashboard(txns) {
   const avg     = debits.length ? totalD / debits.length : 0;
   const maxT    = debits.reduce((m, t) => t.amount > m.amount ? t : m, debits[0] || { amount: 0 });
   const dates   = txns.map(t => t.dateObj).filter(Boolean);
-  const d0      = dates.length ? new Date(Math.min(...dates)) : new Date();
-  const d1      = dates.length ? new Date(Math.max(...dates)) : new Date();
+  // BUG 3 fix: Math.min/max spread crashes with "Maximum call stack size exceeded"
+  // on statements with hundreds of transactions. Use reduce instead.
+  const d0      = dates.length ? dates.reduce((a, b) => +a < +b ? a : b) : new Date();
+  const d1      = dates.length ? dates.reduce((a, b) => +a > +b ? a : b) : new Date();
   const fmt     = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
 
   const sourceBadge = appSource === 'gpay'
@@ -382,7 +497,7 @@ function renderDashboard(txns) {
     return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--s2);border-radius:var(--rs);margin-bottom:5px;">
       <span style="font-size:10px;color:var(--t3);font-family:'JetBrains Mono',monospace;width:16px;flex-shrink:0;">${i + 1}</span>
       <div style="flex:1;min-width:0;">
-        <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.name}</div>
+        <div style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(t.name)}</div>
         <div style="font-size:10px;color:var(--t3);font-family:'JetBrains Mono',monospace;">${t.category}</div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -401,10 +516,223 @@ function renderDashboard(txns) {
   document.getElementById('vendorList').innerHTML = topVen.map((v, i) => `
     <div class="vendor-item">
       <span class="v-rank">${i + 1}</span>
-      <span class="v-name">${v.name.slice(0, 22)}</span>
+      <span class="v-name">${escHtml(v.name.slice(0, 22))}</span>
       <span class="v-count">${v.count}×</span>
       <span class="v-amt">${INR0(v.total)}</span>
     </div>`).join('');
+
+  // ── Cumulative Spend Chart ──
+  // Pre-compute both ISO maps — toggle and range never re-parse transactions
+  const debitIsoMap = {}, creditIsoMap = {};
+  debits.forEach(t => { const k = toIso(t.dateObj); if (k) debitIsoMap[k] = (debitIsoMap[k] || 0) + t.amount; });
+  credits.forEach(t => { const k = toIso(t.dateObj); if (k) creditIsoMap[k] = (creditIsoMap[k] || 0) + t.amount; });
+
+  // Build raw daily arrays for both modes across the full calendar range (including ₹0 days)
+  const cDays = [], cDebitDaily = [], cCreditDaily = [];
+  const cStart = new Date(d0); cStart.setHours(0,0,0,0);
+  const cEnd   = new Date(d1); cEnd.setHours(0,0,0,0);
+  for (let cur = new Date(cStart); +cur <= +cEnd; cur.setDate(cur.getDate() + 1)) {
+    const k = toIso(cur);
+    cDays.push(new Date(cur));
+    cDebitDaily.push(debitIsoMap[k] || 0);
+    cCreditDaily.push(creditIsoMap[k] || 0);
+  }
+
+  // Initialise shared state with debit + all as the default view
+  const initView = buildCumulView({ days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily }, 'debit', 'all');
+  cumulState = {
+    mode: 'debit', range: 'all',
+    days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily,
+    viewDays:  initView.viewDays,  viewDaily: initView.viewDaily,
+    viewCumul: initView.viewCumul, viewPeak:  initView.viewPeak
+  };
+
+  const cumulPlugin = {
+    id: 'cumulMeta',
+    afterDraw(chart) {
+      const { ctx, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
+      if (!x || !y || !cumulState?.viewDays?.length) return;
+      const { viewDays, viewDaily, viewCumul } = cumulState;
+      // Always use the chart's current label array for pixel lookups.
+      // Passing an integer index to a CategoryScale with string labels ("1/5", "2/5"…)
+      // causes Chart.js to misresolve the position — pass the label string instead.
+      const labels = chart.data.labels;
+
+      // ── Month boundary dividers ──────────────────────────────────────────────
+      for (let i = 1; i < viewDays.length; i++) {
+        if (viewDays[i].getMonth() === viewDays[i-1].getMonth()) continue;
+        const xPx = x.getPixelForValue(labels[i]);
+        if (xPx == null || xPx <= left || xPx >= right) continue;
+        const lbl = viewDays[i].toLocaleString('en-IN', { month: 'short' }) + ' ' + viewDays[i].getFullYear();
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(xPx, top); ctx.lineTo(xPx, bottom); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(160,160,190,0.5)'; ctx.font = '9px JetBrains Mono, monospace';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillText(lbl, xPx + 3, bottom - 2);
+        ctx.restore();
+      }
+
+      // ── Average daily spend line ─────────────────────────────────────────────
+      // Computed fresh from the active view so it updates with every mode/range change.
+      const totalCumul = viewCumul.length ? viewCumul[viewCumul.length - 1] : 0;
+      const avgPerDay  = viewDays.length  ? totalCumul / viewDays.length : 0;
+      if (avgPerDay > 0) {
+        const avgY = y.getPixelForValue(avgPerDay);
+        if (avgY > top && avgY < bottom) {
+          // Amber + [6,3] dash — visually distinct from the crosshair's white [4,4] hair
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255,171,64,0.38)';
+          ctx.lineWidth   = 1;
+          ctx.setLineDash([6, 3]);
+          ctx.beginPath(); ctx.moveTo(left, avgY); ctx.lineTo(right, avgY); ctx.stroke();
+          ctx.setLineDash([]);
+          const avgLbl = 'Avg ' + (avgPerDay >= 1000
+            ? '₹' + (avgPerDay / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+            : '₹' + Math.round(avgPerDay).toLocaleString('en-IN')) + '/day';
+          ctx.font = '500 9px JetBrains Mono, monospace';
+          const aw = ctx.measureText(avgLbl).width + 6;
+          ctx.fillStyle = 'rgba(18,18,28,0.75)';
+          ctx.fillRect(right - aw - 1, avgY - 7, aw + 2, 14);
+          ctx.fillStyle    = 'rgba(255,171,64,0.85)';
+          ctx.textAlign    = 'right';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(avgLbl, right - 3, avgY);
+          ctx.restore();
+        }
+      }
+
+      // ── Peak annotation ──────────────────────────────────────────────────────
+      // Re-derive the peak index live from the current viewDaily on every draw.
+      // This guarantees it is always correct for the active mode + range without
+      // relying on any cached value in cumulState.viewPeak.
+      if (!viewDaily.length) return;
+      const peakIdx = viewDaily.reduce((b, v, i) => v > viewDaily[b] ? i : b, 0);
+      if (viewDaily[peakIdx] <= 0) return;
+
+      const xPx = x.getPixelForValue(labels[peakIdx]);
+      const yPx = y.getPixelForValue(viewCumul[peakIdx]);
+      if (xPx == null || xPx < left || xPx > right) return;
+
+      const nearRight = xPx > left + (right - left) * 0.75;
+      const nearTop   = yPx < top + 22;
+      ctx.save();
+      ctx.fillStyle    = '#ffab40';
+      ctx.font         = '600 10px Inter, sans-serif';
+      ctx.textAlign    = nearRight ? 'right' : 'center';
+      ctx.textBaseline = nearTop   ? 'top'   : 'bottom';
+      ctx.fillText(
+        '+' + INR0(viewDaily[peakIdx]),
+        xPx + (nearRight ? -8 : 0),
+        nearTop ? yPx + 12 : yPx - 10
+      );
+      ctx.restore();
+    }
+  };
+
+  if (charts.cumul) charts.cumul.destroy();
+  charts.cumul = new Chart(document.getElementById('cumulChart'), {
+    type: 'line',
+    data: {
+      labels: cumulState.viewDays.map(d => d.getDate() + '/' + (d.getMonth() + 1)),
+      datasets: [{
+        data: cumulState.viewCumul,
+        borderColor: '#ff5c5c', backgroundColor: 'rgba(255,92,92,0.07)',
+        borderWidth: 2, fill: true, tension: 0.35, clip: false,
+        pointRadius:          cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 6 : (v > 0 ? 2 : 0)),
+        pointBackgroundColor: cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#ffab40' : '#ff5c5c'),
+        pointBorderColor:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#fff'    : '#ff5c5c'),
+        pointBorderWidth:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 2         : 0)
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false } // crosshair overlay renders the label inline
+      },
+      scales: {
+        y: {
+          min: 0,
+          ticks: { callback: v => v >= 1000 ? '₹' + (v/1000).toFixed(0) + 'K' : INR0(v), font: { size: 12, family: 'JetBrains Mono' }, color: '#9090b8' },
+          grid: { color: 'rgba(255,255,255,0.03)' }
+        },
+        x: {
+          ticks: {
+            // Fix 1: force one tick per day — no skipping — rotated to prevent overlap
+            autoSkip: false,
+            maxRotation: 45,
+            minRotation: 0,
+            font: { size: 10, family: 'JetBrains Mono' },
+            color: '#9090b8',
+            // Show D/M on first tick and on the 1st of each new month; bare day number otherwise
+            callback: (val, i) => {
+              const d = cumulState?.viewDays?.[i];
+              if (!d) return val;
+              return (i === 0 || d.getDate() === 1)
+                ? d.getDate() + '/' + (d.getMonth() + 1)
+                : String(d.getDate());
+            }
+          },
+          grid: { display: false }
+        }
+      }
+    },
+    plugins: [cumulPlugin]
+  });
+
+  // Sync both selectors to the initial Debit + All state
+  applyCumulToggleStyle('debit');
+  applyCumulRangeStyle('all');
+
+  // ── Crosshair overlay ──
+  const crossCanvas = document.getElementById('cumulCrosshair');
+  if (crossCanvas) {
+    // Size the overlay to match the chart canvas exactly, respecting device pixel ratio
+    const dpr = window.devicePixelRatio || 1;
+    const cw  = Math.round(charts.cumul.canvas.width  / dpr); // CSS pixels
+    const ch  = Math.round(charts.cumul.canvas.height / dpr);
+    crossCanvas.width  = cw * dpr;   // physical pixels
+    crossCanvas.height = ch * dpr;
+    crossCanvas.style.width  = cw + 'px';
+    crossCanvas.style.height = ch + 'px';
+    const crossCtx = crossCanvas.getContext('2d');
+    crossCtx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel coordinates
+
+    // Store on cumulState so updateCumul can clear on data change
+    cumulState.crossCtx = crossCtx;
+    cumulState.crossCW  = cw;
+    cumulState.crossCH  = ch;
+
+    // onmousemove replaces itself on re-render (no listener stacking)
+    charts.cumul.canvas.onmousemove = e => {
+      if (!cumulState?.viewDays?.length || !charts.cumul) return;
+      const chart  = charts.cumul;
+      const rect   = chart.canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const { left, right } = chart.chartArea;
+
+      crossCtx.clearRect(0, 0, cw, ch);
+      if (mouseX < left || mouseX > right) return;
+
+      const xScale = chart.scales.x;
+      const rawIdx = xScale.getValueForPixel(mouseX);
+      if (rawIdx == null || isNaN(rawIdx)) return;
+      const dataIndex = Math.round(Math.max(0, Math.min(rawIdx, chart.data.labels.length - 1)));
+
+      // Pass the label string, not the integer index — same fix as the plugin annotation
+      const snapX = xScale.getPixelForValue(chart.data.labels[dataIndex] ?? dataIndex);
+      const yVal  = chart.data.datasets[0].data[dataIndex] ?? 0;
+      const snapY = chart.scales.y.getPixelForValue(yVal);
+
+      drawCumulCrosshair(crossCtx, chart, snapX, snapY, dataIndex, yVal);
+    };
+
+    charts.cumul.canvas.onmouseleave = () => {
+      crossCtx.clearRect(0, 0, cw, ch);
+    };
+  }
 
   // Hour chart
   const hourMap   = Array(24).fill(0);
@@ -535,6 +863,383 @@ function renderDashboard(txns) {
   if (typeof OPENAI_KEY !== 'undefined' && OPENAI_KEY && OPENAI_KEY !== 'YOUR_OPENAI_KEY_HERE') {
     runAIAnalysis(OPENAI_KEY, { debits, credits, totalD, totalC, net, catMap, topVen, anomalies, score, d0, d1 });
   }
+
+  document.getElementById('dlBtn').style.display = 'inline-block';
+}
+
+// Slice + rebaseline a cumulative series to the requested range window
+function buildCumulView(state, mode, range) {
+  const rawDaily = mode === 'debit' ? state.debitDaily : state.creditDaily;
+  const n = rawDaily.length;
+  const win   = range === '1w' ? 7 : range === '2w' ? 14 : range === '1m' ? 30 : Infinity;
+  const start = isFinite(win) ? Math.max(0, n - win) : 0;
+  const viewDays  = state.days.slice(start);
+  const viewDaily = rawDaily.slice(start);
+  let run = 0;
+  const viewCumul = viewDaily.map(v => { run += v; return run; });
+  const viewPeak  = viewDaily.length ? viewDaily.reduce((b, v, i) => v > viewDaily[b] ? i : b, 0) : 0;
+  return { viewDays, viewDaily, viewCumul, viewPeak };
+}
+
+// Colour-matched active styling for the Debit / Credit toggle
+function applyCumulToggleStyle(mode) {
+  const isDebit   = mode === 'debit';
+  const debitBtn  = document.getElementById('cumulDebitBtn');
+  const creditBtn = document.getElementById('cumulCreditBtn');
+  if (!debitBtn || !creditBtn) return;
+  debitBtn.classList.toggle('active', isDebit);
+  creditBtn.classList.toggle('active', !isDebit);
+  debitBtn.style.borderColor  = isDebit  ? '#ff5c5c' : '';
+  debitBtn.style.color        = isDebit  ? '#ff5c5c' : '';
+  debitBtn.style.background   = isDebit  ? 'rgba(255,92,92,0.1)' : '';
+  creditBtn.style.borderColor = !isDebit ? '#00c896' : '';
+  creditBtn.style.color       = !isDebit ? '#00c896' : '';
+  creditBtn.style.background  = !isDebit ? 'rgba(0,200,150,0.1)' : '';
+}
+
+// Highlight the active range pill
+function applyCumulRangeStyle(range) {
+  ['1w','2w','1m','all'].forEach(r => {
+    const btn = document.getElementById('cumulRange' + r);
+    if (btn) btn.classList.toggle('active', r === range);
+  });
+}
+
+// Central update: called by both mode toggle and range selector
+function updateCumul(mode, range) {
+  if (!cumulState || !charts.cumul) return;
+  cumulState.mode = mode;
+  cumulState.range = range;
+
+  const view = buildCumulView(cumulState, mode, range);
+  cumulState.viewDays  = view.viewDays;
+  cumulState.viewDaily = view.viewDaily;
+  cumulState.viewCumul = view.viewCumul;
+  cumulState.viewPeak  = view.viewPeak;
+
+  const isDebit = mode === 'debit';
+  const color   = isDebit ? '#ff5c5c'              : '#00c896';
+  const bgColor = isDebit ? 'rgba(255,92,92,0.07)' : 'rgba(0,200,150,0.07)';
+  const { viewDays, viewDaily, viewCumul, viewPeak } = cumulState;
+
+  charts.cumul.data.labels = viewDays.map(d => d.getDate() + '/' + (d.getMonth() + 1));
+  const ds = charts.cumul.data.datasets[0];
+  ds.data             = viewCumul;
+  ds.borderColor      = color;
+  ds.backgroundColor  = bgColor;
+  ds.pointRadius          = viewDaily.map((v, i) => i === viewPeak ? 6 : (v > 0 ? 2 : 0));
+  ds.pointBackgroundColor = viewDaily.map((v, i) => i === viewPeak ? '#ffab40' : color);
+  ds.pointBorderColor     = viewDaily.map((v, i) => i === viewPeak ? '#fff'    : color);
+  ds.pointBorderWidth     = viewDaily.map((v, i) => i === viewPeak ? 2         : 0);
+  charts.cumul.update();
+  // Clear stale crosshair immediately so it doesn't linger over new data
+  if (cumulState.crossCtx) cumulState.crossCtx.clearRect(0, 0, cumulState.crossCW, cumulState.crossCH);
+
+  const sub = document.getElementById('cumulSub');
+  if (sub) {
+    const base   = isDebit ? 'Running total of debits' : 'Running total of credits received';
+    const suffix = range === 'all'
+      ? (isDebit ? ' from day 1 — steeper slope = faster burn rate' : ' from day 1')
+      : ` — last ${range === '1w' ? '7' : range === '2w' ? '14' : '30'} days`;
+    sub.textContent = base + suffix;
+  }
+
+  applyCumulToggleStyle(mode);
+  applyCumulRangeStyle(range);
+}
+
+window.setCumulMode  = function(mode)  { if (cumulState) updateCumul(mode,  cumulState.range); };
+window.setCumulRange = function(range) { if (cumulState) updateCumul(cumulState.mode, range); };
+
+function drawCumulCrosshair(ctx, chart, snapX, snapY, dataIndex, yVal) {
+  if (!cumulState?.viewDays) return;
+  const { left, right, top, bottom } = chart.chartArea;
+  const d         = cumulState.viewDays[dataIndex];
+  const dotColor  = cumulState.mode === 'debit' ? '#ff5c5c' : '#00c896';
+
+  ctx.save();
+
+  // ── Vertical hair ─────────────────────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(snapX, top); ctx.lineTo(snapX, bottom); ctx.stroke();
+
+  // ── Horizontal dashed hair ─────────────────────────────────────────────────
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(left, snapY); ctx.lineTo(right, snapY); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // ── Dot at intersection ────────────────────────────────────────────────────
+  ctx.beginPath();
+  ctx.arc(snapX, snapY, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle   = dotColor;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+  ctx.lineWidth   = 1.5;
+  ctx.stroke();
+
+  // ── Two-line label: cumulative headline + daily context ───────────────────
+  const amtStr  = INR0(yVal);
+  const dateStr = d ? d.getDate() + '/' + (d.getMonth() + 1) : '';
+  const dayAmt  = cumulState.viewDaily[dataIndex] ?? 0;
+  const dayWord = cumulState.mode === 'debit' ? 'spent today' : 'received today';
+  const line1   = amtStr + '  |  ' + dateStr;          // headline: cumulative | date
+  const line2   = '+' + INR0(dayAmt) + ' ' + dayWord;  // context:  daily amount
+
+  ctx.font = '600 11px Inter, sans-serif';
+  const tw1 = ctx.measureText(line1).width;
+  ctx.font = '400 10px Inter, sans-serif';
+  const tw2 = ctx.measureText(line2).width;
+
+  const pad = 8, lh = 33, lw = Math.max(tw1, tw2) + pad * 2;
+
+  // Centre on snap X, clamp so it never overflows chart edges
+  let lx = snapX - lw / 2;
+  lx = Math.max(left, Math.min(lx, right - lw));
+  const ly = top + 4; // just inside the top of the chart area
+
+  ctx.fillStyle = 'rgba(18,18,28,0.92)';
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 4); ctx.fill();
+  } else {
+    ctx.fillRect(lx, ly, lw, lh);
+  }
+
+  // Line 1 — cumulative amount + date (bright, bold — the headline)
+  ctx.font         = '600 11px Inter, sans-serif';
+  ctx.fillStyle    = '#e2e2f0';
+  ctx.textAlign    = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(line1, lx + pad, ly + 11);
+
+  // Line 2 — daily amount (dimmer, lighter weight — supporting context)
+  ctx.font      = '400 10px Inter, sans-serif';
+  ctx.fillStyle = '#7878a0';
+  ctx.fillText(line2, lx + pad, ly + 24);
+
+  // ── Y-axis tick highlight ──────────────────────────────────────────────────
+  const yTick = yVal >= 1000
+    ? '₹' + (yVal / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+    : INR0(yVal);
+  ctx.font    = '500 10px JetBrains Mono, monospace';
+  const yw = ctx.measureText(yTick).width + 8, yh = 16;
+  const yx = left - yw - 3;
+
+  if (yx >= 0) {
+    ctx.fillStyle = 'rgba(18,18,28,0.92)';
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(yx, snapY - yh / 2, yw, yh, 3); ctx.fill();
+    } else {
+      ctx.fillRect(yx, snapY - yh / 2, yw, yh);
+    }
+    ctx.fillStyle    = '#9090b8';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(yTick, yx + yw / 2, snapY);
+  }
+
+  ctx.restore();
+}
+
+function downloadExcel() {
+  if (!allTxns.length) return;
+  if (typeof XLSX === 'undefined') { alert('XLSX library not loaded — check your internet connection and reload.'); return; }
+
+  const wb   = XLSX.utils.book_new();
+  const WKDY = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const src  = appSource === 'gpay' ? 'Google Pay' : 'PhonePe';
+  const dbts = allTxns.filter(t => t.type === 'Debit');
+  const crds = allTxns.filter(t => t.type === 'Credit');
+  const totD = dbts.reduce((s, t) => s + t.amount, 0);
+
+  const validDates = allTxns.map(t => t.dateObj).filter(d => d && !isNaN(+d));
+  const d0 = validDates.length ? validDates.reduce((a, b) => +a < +b ? a : b) : new Date();
+  const d1 = validDates.length ? validDates.reduce((a, b) => +a > +b ? a : b) : new Date();
+  const fmtD = d => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  // Freeze the first row of a worksheet
+  const freeze1 = ws => {
+    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activePane: 'bottomLeft', state: 'frozen' };
+  };
+
+  // Set Excel number-format string on a column of cells (0-indexed col, 1-indexed rows)
+  const fmtCol = (ws, col, rowStart, rowEnd, z) => {
+    for (let r = rowStart; r <= rowEnd; r++) {
+      const ref = XLSX.utils.encode_cell({ r, c: col });
+      if (ws[ref]) ws[ref].z = z;
+    }
+  };
+
+  // Auto-size columns from content (max char width per column, capped)
+  const autoW = (data, cap = 48) => {
+    const ncols = data.reduce((m, r) => Math.max(m, r.length), 0);
+    const w = Array(ncols).fill(8);
+    data.forEach(row => row.forEach((v, i) => {
+      const l = String(v == null ? '' : v).length;
+      if (l + 2 > w[i]) w[i] = Math.min(l + 2, cap);
+    }));
+    return w.map(n => ({ wch: n }));
+  };
+
+  const CURR = '#,##0.00';
+  const PCT  = '0.0%';
+
+  // ── Sheet 1 — All Transactions ──────────────────────────────────────────
+  const s1 = [
+    ['DATE', 'DAY OF WEEK', 'TIME', 'MERCHANT / DESCRIPTION', 'CATEGORY', 'TYPE', 'AMOUNT (₹)', 'SOURCE'],
+    ...allTxns.map(t => [
+      t.date,
+      (t.dateObj && !isNaN(+t.dateObj)) ? WKDY[t.dateObj.getDay()] : '',
+      t.time,
+      t.name,
+      t.category,
+      t.type,
+      t.amount,
+      src
+    ])
+  ];
+  const ws1 = XLSX.utils.aoa_to_sheet(s1);
+  ws1['!cols'] = autoW(s1);
+  fmtCol(ws1, 6, 1, s1.length - 1, CURR);
+  freeze1(ws1);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Transactions');
+
+  // ── Sheet 2 — Monthly Summary ────────────────────────────────────────────
+  const monMap = {};
+  allTxns.forEach(t => {
+    if (!t.dateObj || isNaN(+t.dateObj)) return;
+    const key = t.dateObj.getFullYear() + '-' + String(t.dateObj.getMonth() + 1).padStart(2, '0');
+    if (!monMap[key]) monMap[key] = {
+      label: t.dateObj.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }),
+      dbts: [], crds: []
+    };
+    (t.type === 'Debit' ? monMap[key].dbts : monMap[key].crds).push(t);
+  });
+
+  const s2 = [
+    ['MONTH', 'TOTAL SPENT (₹)', 'TOTAL RECEIVED (₹)', 'NET FLOW (₹)', 'TXN COUNT', 'AVG TXN SIZE (₹)', 'LARGEST SPEND (₹)', 'TOP 3 MERCHANTS'],
+    ...Object.entries(monMap).sort(([a],[b]) => a.localeCompare(b)).map(([, m]) => {
+      const spent = m.dbts.reduce((s, t) => s + t.amount, 0);
+      const recv  = m.crds.reduce((s, t) => s + t.amount, 0);
+      const avg   = m.dbts.length ? spent / m.dbts.length : 0;
+      const big   = m.dbts.length ? m.dbts.reduce((x, t) => t.amount > x ? t.amount : x, 0) : 0;
+      const vm = {};
+      m.dbts.forEach(t => { vm[t.name] = (vm[t.name] || 0) + t.amount; });
+      const top3 = Object.entries(vm).sort(([,a],[,b]) => b-a).slice(0, 3).map(([n]) => n).join(' · ');
+      return [m.label, spent, recv, recv - spent, m.dbts.length + m.crds.length, avg, big, top3];
+    })
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(s2);
+  ws2['!cols'] = autoW(s2);
+  [1,2,3,5,6].forEach(c => fmtCol(ws2, c, 1, s2.length - 1, CURR));
+  freeze1(ws2);
+  XLSX.utils.book_append_sheet(wb, ws2, 'Monthly Summary');
+
+  // ── Sheet 3 — Category Breakdown ─────────────────────────────────────────
+  const catStats = {};
+  dbts.forEach(t => {
+    if (!catStats[t.category]) catStats[t.category] = { txns: [], ven: {} };
+    catStats[t.category].txns.push(t);
+    catStats[t.category].ven[t.name] = (catStats[t.category].ven[t.name] || 0) + 1;
+  });
+
+  const s3 = [
+    ['CATEGORY', 'TOTAL SPENT (₹)', '% OF TOTAL', 'TXN COUNT', 'AVG SPEND (₹)', 'MIN (₹)', 'MAX (₹)', 'TOP MERCHANT'],
+    ...Object.entries(catStats)
+      .sort(([,a],[,b]) => b.txns.reduce((s,t)=>s+t.amount,0) - a.txns.reduce((s,t)=>s+t.amount,0))
+      .map(([cat, { txns, ven }]) => {
+        const tot  = txns.reduce((s, t) => s + t.amount, 0);
+        const amts = txns.map(t => t.amount);
+        const mn   = amts.reduce((a,b) => a < b ? a : b);
+        const mx   = amts.reduce((a,b) => a > b ? a : b);
+        const topV = Object.entries(ven).sort(([,a],[,b]) => b-a)[0]?.[0] || '';
+        return [cat, tot, totD ? tot / totD : 0, txns.length, tot / txns.length, mn, mx, topV];
+      })
+  ];
+  const ws3 = XLSX.utils.aoa_to_sheet(s3);
+  ws3['!cols'] = autoW(s3);
+  [1,4,5,6].forEach(c => fmtCol(ws3, c, 1, s3.length - 1, CURR));
+  fmtCol(ws3, 2, 1, s3.length - 1, PCT);
+  freeze1(ws3);
+  XLSX.utils.book_append_sheet(wb, ws3, 'Categories');
+
+  // ── Sheet 4 — Daily Spend (every calendar day in range) ──────────────────
+  const dayDb = {}, dayCr = {}, dayCt = {};
+  allTxns.forEach(t => {
+    const k = toIso(t.dateObj);
+    if (!k) return;
+    if (t.type === 'Debit')  dayDb[k] = (dayDb[k] || 0) + t.amount;
+    else                     dayCr[k] = (dayCr[k] || 0) + t.amount;
+    dayCt[k] = (dayCt[k] || 0) + 1;
+  });
+
+  let cumul = 0;
+  const s4rows = [];
+  const s4start = new Date(d0); s4start.setHours(0,0,0,0);
+  const s4end   = new Date(d1); s4end.setHours(0,0,0,0);
+  for (let cur = new Date(s4start); +cur <= +s4end; cur.setDate(cur.getDate() + 1)) {
+    const k = toIso(cur);
+    const db = dayDb[k] || 0;
+    cumul += db;
+    s4rows.push([
+      fmtD(cur),
+      WKDY[cur.getDay()],
+      db,
+      dayCr[k] || 0,
+      dayCt[k] || 0,
+      cumul
+    ]);
+  }
+  const s4 = [['DATE', 'DAY OF WEEK', 'TOTAL DEBITS (₹)', 'TOTAL CREDITS (₹)', 'TXN COUNT', 'CUMULATIVE SPEND (₹)'], ...s4rows];
+  const ws4 = XLSX.utils.aoa_to_sheet(s4);
+  ws4['!cols'] = autoW(s4);
+  [2,3,5].forEach(c => fmtCol(ws4, c, 1, s4.length - 1, CURR));
+  freeze1(ws4);
+  XLSX.utils.book_append_sheet(wb, ws4, 'Daily Spend');
+
+  // ── Sheet 5 — Merchant Analysis ───────────────────────────────────────────
+  const venStats = {};
+  dbts.forEach(t => {
+    const key = t.name.toUpperCase().trim();
+    if (!venStats[key]) venStats[key] = { name: t.name, txns: [] };
+    venStats[key].txns.push(t);
+  });
+
+  const monthsSpanned = Math.max(1,
+    (d1.getFullYear() - d0.getFullYear()) * 12 + (d1.getMonth() - d0.getMonth()) + 1
+  );
+
+  const s5 = [
+    ['MERCHANT', 'TOTAL SPEND (₹)', 'TXN COUNT', 'AVG PER VISIT (₹)', 'FIRST TXN', 'LAST TXN', 'ACTIVE DAYS', 'FREQ (TXN/MONTH)'],
+    ...Object.values(venStats)
+      .sort((a, b) => b.txns.reduce((s,t)=>s+t.amount,0) - a.txns.reduce((s,t)=>s+t.amount,0))
+      .map(({ name, txns }) => {
+        const tot  = txns.reduce((s, t) => s + t.amount, 0);
+        const vd   = txns.map(t => t.dateObj).filter(d => d && !isNaN(+d));
+        const frst = vd.length ? fmtD(vd.reduce((a,b) => +a < +b ? a : b)) : '';
+        const last = vd.length ? fmtD(vd.reduce((a,b) => +a > +b ? a : b)) : '';
+        const days = new Set(txns.map(t => toIso(t.dateObj)).filter(Boolean)).size;
+        return [name, tot, txns.length, tot / txns.length, frst, last, days, +(txns.length / monthsSpanned).toFixed(1)];
+      })
+  ];
+  const ws5 = XLSX.utils.aoa_to_sheet(s5);
+  ws5['!cols'] = autoW(s5);
+  [1,3].forEach(c => fmtCol(ws5, c, 1, s5.length - 1, CURR));
+  fmtCol(ws5, 7, 1, s5.length - 1, '0.0');
+  freeze1(ws5);
+  XLSX.utils.book_append_sheet(wb, ws5, 'Merchants');
+
+  // ── Filename ─────────────────────────────────────────────────────────────
+  const toMY = d => d.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }).replace(' ', '_');
+  const startMY = toMY(d0), endMY = toMY(d1);
+  XLSX.writeFile(wb, startMY === endMY
+    ? `SpendLens_Report_${startMY}.xlsx`
+    : `SpendLens_Report_${startMY}_to_${endMY}.xlsx`
+  );
 }
 
 function renderTxnTable(txns, filter) {
@@ -546,7 +1251,7 @@ function renderTxnTable(txns, filter) {
     const col = catColor(cat);
     return `<tr>
       <td style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#ececf1;white-space:nowrap;">${t.date}<br>${t.time}</td>
-      <td style="font-weight:500;max-width:200px;">${t.name}</td>
+      <td style="font-weight:500;max-width:200px;">${escHtml(t.name)}</td>
       <td><span class="cat-tag" style="background:${cat === 'Income / received' ? '#1a3a2a' : '#2d2d52'};color:${cat === 'Income / received' ? '#4ade80' : '#a5b4fc'};">${cat}</span></td>
       <td><span class="pill ${t.type === 'Debit' ? 'pill-debit' : 'pill-credit'}">${t.type}</span></td>
       <td class="${t.type === 'Debit' ? 'amt-debit' : 'amt-credit'}">${INR2(t.amount)}</td>
@@ -566,7 +1271,7 @@ function genInsights(debits, credits, catMap, venMap, total) {
   if (loan > total * 0.25) ins.push({ type: 'alert', icon: '⚡', title: 'Heavy loan burden', body: `EMIs are ${INR0(loan)} — ${Math.round(loan / total * 100)}% of outflow. Prepaying the smallest loan can free up significant cash.` });
   if (food > 0) ins.push({ type: 'good', icon: '🍽️', title: 'Food tracked', body: `${INR0(food)} across ${debits.filter(t => t.category === 'Food & dining').length} meals — avg ${INR0(Math.round(food / Math.max(1, debits.filter(t => t.category === 'Food & dining').length)))} per transaction.` });
   if (fuel > 0) ins.push({ type: 'warn', icon: '⛽', title: 'Fuel costs', body: `${INR0(fuel)} on fuel. Metro or carpooling could reduce this significantly.` });
-  if (topV) ins.push({ type: 'good', icon: '🔁', title: 'Top vendor', body: `${topV.name} — visited ${topV.count}×, spending ${INR0(topV.total)} total.` });
+  if (topV) ins.push({ type: 'good', icon: '🔁', title: 'Top vendor', body: `${escHtml(topV.name)} — visited ${topV.count}×, spending ${INR0(topV.total)} total.` });
   if (night.length > 3) ins.push({ type: 'warn', icon: '🌙', title: 'Late-night spending', body: `${night.length} transactions after 10 PM or before 6 AM totalling ${INR0(night.reduce((s, t) => s + t.amount, 0))}. Impulse risk.` });
   if (credits.length > 0) ins.push({ type: 'good', icon: '💰', title: `${credits.length} credits received`, body: `Total received: ${INR0(credits.reduce((s, t) => s + t.amount, 0))} from ${credits.length} transactions.` });
   if (groc > 500) ins.push({ type: 'warn', icon: '🛒', title: 'Quick commerce habit', body: `${INR0(groc)} on quick delivery. Bulk shopping saves 30–40%.` });
@@ -577,10 +1282,10 @@ function detectAnomalies(debits, dayMap, venMap) {
   const out  = [];
   const mean = debits.reduce((s, t) => s + t.amount, 0) / debits.length;
   [...debits].sort((a, b) => b.amount - a.amount).slice(0, 3).forEach(t => {
-    if (t.amount > mean * 8) out.push({ level: 'high', title: `Large payment: ${INR0(t.amount)} to ${t.name}`, desc: `${Math.round(t.amount / mean)}× your average — verify this was intentional.` });
+    if (t.amount > mean * 8) out.push({ level: 'high', title: `Large payment: ${INR0(t.amount)} to ${escHtml(t.name)}`, desc: `${Math.round(t.amount / mean)}× your average — verify this was intentional.` });
   });
   debits.filter(t => { const h = t.dateObj?.getHours(); return h >= 0 && h <= 5; }).forEach(t => {
-    if (t.amount > 1000) out.push({ level: 'med', title: `Odd-hour payment: ${INR0(t.amount)} at ${t.time}`, desc: `To ${t.name}. Late-night large payments warrant review.` });
+    if (t.amount > 1000) out.push({ level: 'med', title: `Odd-hour payment: ${INR0(t.amount)} at ${t.time}`, desc: `To ${escHtml(t.name)}. Late-night large payments warrant review.` });
   });
   const avgDay = Object.values(dayMap).reduce((s, v) => s + v, 0) / Object.values(dayMap).length;
   Object.entries(dayMap).forEach(([day, amt]) => {
@@ -600,7 +1305,8 @@ function calcScore(catMap, debits, total, net) {
 }
 
 function verdictDesc(score, catMap, total, net) {
-  const lp = Math.round((catMap['Loans & EMIs'] || 0) / total * 100);
+  // BUG 4 fix: total === 0 (credit-only statement) produces NaN% without this guard
+  const lp = total ? Math.round((catMap['Loans & EMIs'] || 0) / total * 100) : 0;
   if (score >= 70) return 'Spending is well controlled. Daily expenses are modest and the period shows positive or neutral flow. Keep this discipline and focus on building savings.';
   if (score >= 45) return `Day-to-day spending is reasonable but fixed obligations (EMIs: ${lp}% of outflow${net < 0 ? ', net outflow negative' : ''}) leave limited breathing room. Reducing loan count is the highest-leverage action.`;
   return `Significant financial pressure — high loan ratio (${lp}%) and net outflow are straining your finances. Prioritize clearing one loan, cut discretionary spend, and build an emergency buffer.`;
@@ -685,6 +1391,7 @@ async function handleFile(file) {
     document.getElementById('loaderText').textContent = 'Building dashboard...';
     await new Promise(r => setTimeout(r, 200));
     allTxns = txns;
+    saveSession(); // persist immediately so a refresh restores this dashboard
     ls.style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
     renderDashboard(txns);
@@ -715,3 +1422,8 @@ dropZone.addEventListener('drop', function(e) {
   const file = e.dataTransfer.files[0];
   if (file) handleFile(file);
 });
+
+// On every page load (including F5 refresh), attempt to restore the last session.
+// hydrateSession() is called after all DOM listeners are registered so renderDashboard
+// can safely wire up chart events and interactive elements.
+hydrateSession();
