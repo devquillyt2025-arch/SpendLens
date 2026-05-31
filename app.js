@@ -1,5 +1,3 @@
-// OPENAI_KEY is defined in config.js (gitignored)
-
 // BUG 7 fix: escape HTML in all user-data strings before innerHTML insertion
 function escHtml(s) {
   return String(s)
@@ -859,10 +857,9 @@ function renderDashboard(txns) {
     </div>
     <div><span class="score-badge ${sClass}">${sLabel}</span></div>`;
 
-  // AI analysis
-  if (typeof OPENAI_KEY !== 'undefined' && OPENAI_KEY && OPENAI_KEY !== 'YOUR_OPENAI_KEY_HERE') {
-    runAIAnalysis(OPENAI_KEY, { debits, credits, totalD, totalC, net, catMap, topVen, anomalies, score, d0, d1 });
-  }
+  // Spending summary
+  const summaryLines = genSmartSummary(debits, credits, catMap, dayMap, topVen, totalD, totalC, net, d0, d1);
+  document.getElementById('summaryText').innerHTML = '<ul>' + summaryLines.map(l => `<li>${l}</li>`).join('') + '</ul>';
 
   document.getElementById('dlBtn').style.display = 'inline-block';
 }
@@ -1281,15 +1278,15 @@ function genInsights(debits, credits, catMap, venMap, total) {
 function detectAnomalies(debits, dayMap, venMap) {
   const out  = [];
   const mean = debits.reduce((s, t) => s + t.amount, 0) / debits.length;
-  [...debits].sort((a, b) => b.amount - a.amount).slice(0, 3).forEach(t => {
-    if (t.amount > mean * 8) out.push({ level: 'high', title: `Large payment: ${INR0(t.amount)} to ${escHtml(t.name)}`, desc: `${Math.round(t.amount / mean)}× your average — verify this was intentional.` });
+  [...debits].sort((a, b) => b.amount - a.amount).slice(0, 5).forEach(t => {
+    if (t.amount > mean * 2) out.push({ level: 'high', title: `Large payment: ${INR0(t.amount)} to ${escHtml(t.name)}`, desc: `${Math.round(t.amount / mean)}× your average transaction — verify this was intentional.` });
   });
   debits.filter(t => { const h = t.dateObj?.getHours(); return h >= 0 && h <= 5; }).forEach(t => {
     if (t.amount > 1000) out.push({ level: 'med', title: `Odd-hour payment: ${INR0(t.amount)} at ${t.time}`, desc: `To ${escHtml(t.name)}. Late-night large payments warrant review.` });
   });
   const avgDay = Object.values(dayMap).reduce((s, v) => s + v, 0) / Object.values(dayMap).length;
   Object.entries(dayMap).forEach(([day, amt]) => {
-    if (amt > avgDay * 5 && amt > 10000) out.push({ level: 'med', title: `Spending spike ${day}: ${INR0(amt)}`, desc: `${Math.round(amt / avgDay)}× the daily average.` });
+    if (amt > avgDay * 2) out.push({ level: 'med', title: `High spend day ${day}: ${INR0(amt)}`, desc: `${Math.round(amt / avgDay)}× the daily average.` });
   });
   return out.slice(0, 8);
 }
@@ -1312,65 +1309,65 @@ function verdictDesc(score, catMap, total, net) {
   return `Significant financial pressure — high loan ratio (${lp}%) and net outflow are straining your finances. Prioritize clearing one loan, cut discretionary spend, and build an emergency buffer.`;
 }
 
-// ── OpenAI Analysis ──
-async function runAIAnalysis(apiKey, data) {
-  const { debits, credits, totalD, totalC, net, catMap, topVen, anomalies, score, d0, d1 } = data;
-  const fmt = INR0;
-  const catSummary    = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([k, v]) => `${k}: ${fmt(v)} (${Math.round(v / totalD * 100)}%)`).join(', ');
-  const vendorSummary = topVen.slice(0, 5).map(v => `${v.name} (${v.count}×, ${fmt(v.total)})`).join(', ');
+// ── Smart Summary (rule-based) ──
+function genSmartSummary(debits, credits, catMap, dayMap, topVen, totalD, totalC, net, d0, d1) {
+  const lines = [];
+  const days  = Object.keys(dayMap);
+  const avgDay = days.length ? days.reduce((s, d) => s + dayMap[d], 0) / days.length : 0;
 
-  const prompt = `You are a sharp, empathetic personal finance coach. Analyze this spending data and give 4–5 concise, actionable insights. Be specific with numbers. Use **bold** for key figures. Tone: friendly but direct.
-
-Period: ${d0.toLocaleDateString('en-IN')} to ${d1.toLocaleDateString('en-IN')}
-Total spent: ${fmt(totalD)} across ${debits.length} debit transactions
-Total received: ${fmt(totalC)} across ${credits.length} credit transactions
-Net flow: ${net >= 0 ? '+' : '-'}${fmt(Math.abs(net))}
-Health score: ${score}/100
-
-Top spending categories: ${catSummary}
-Frequent vendors: ${vendorSummary}
-${anomalies.length ? 'Anomalies detected: ' + anomalies.map(a => a.title).join('; ') : 'No major anomalies.'}
-
-Give exactly 4–5 insights, each 2–3 sentences. Start each with a clear heading on its own line followed by the detail. No preamble, no closing summary.`;
-
-  const aiLoading = document.getElementById('aiLoading');
-  const aiText    = document.getElementById('aiText');
-  aiLoading.style.display = 'flex';
-  aiText.innerHTML = '';
-
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-      body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: 700, temperature: 0.7, stream: true })
-    });
-    if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'API error'); }
-
-    aiLoading.style.display = 'none';
-    const reader  = res.body.getReader();
-    const decoder = new TextDecoder();
-    let raw = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      for (const line of decoder.decode(value).split('\n')) {
-        const l = line.trim();
-        if (!l || l === 'data: [DONE]') continue;
-        if (l.startsWith('data: ')) {
-          try { const d = JSON.parse(l.slice(6)); raw += d.choices?.[0]?.delta?.content || ''; aiText.innerHTML = formatAI(raw); } catch(e) {}
-        }
-      }
-    }
-    aiText.innerHTML = formatAI(raw);
-  } catch(e) {
-    aiLoading.style.display = 'none';
-    aiText.innerHTML = `<span style="color:var(--red);">AI analysis failed: ${e.message}</span><br><span style="color:var(--t3);font-size:11px;">Check your API key in config.js and reload.</span>`;
+  // Top spending category
+  const topCat = Object.entries(catMap).sort((a, b) => b[1] - a[1])[0];
+  if (topCat) {
+    const n = debits.filter(t => t.category === topCat[0]).length;
+    lines.push(`You spent the most on <strong>${topCat[0]}</strong> this period — ${INR0(topCat[1])} across ${n} transaction${n !== 1 ? 's' : ''}.`);
   }
-}
 
-function formatAI(text) {
-  return text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+  // Peak spend day
+  if (days.length) {
+    const peak = days.reduce((a, b) => dayMap[a] > dayMap[b] ? a : b);
+    lines.push(`<strong>${peak}</strong> was your highest spend day at ${INR0(dayMap[peak])}.`);
+  }
+
+  // Days above average
+  if (avgDay > 0) {
+    const above = days.filter(d => dayMap[d] > avgDay).length;
+    lines.push(`Average daily spend was ${INR0(Math.round(avgDay))}. You exceeded that on <strong>${above}</strong> of ${days.length} day${days.length !== 1 ? 's' : ''}.`);
+  }
+
+  // Top vendor
+  if (topVen.length) {
+    const v = topVen[0];
+    lines.push(`<strong>${escHtml(v.name)}</strong> was your most frequent payee — ${v.count} payment${v.count !== 1 ? 's' : ''} totalling ${INR0(v.total)}.`);
+  }
+
+  // Net flow
+  if (net >= 0) {
+    lines.push(`You received more than you spent. Net surplus: <strong>${INR0(net)}</strong>.`);
+  } else {
+    lines.push(`Outflow exceeded income by <strong>${INR0(Math.abs(net))}</strong> this period.`);
+  }
+
+  // EMI burden (conditional)
+  const emi = catMap['Loans & EMIs'] || 0;
+  if (emi > 0 && totalD > 0) {
+    const pct = Math.round(emi / totalD * 100);
+    lines.push(`Loans & EMIs consumed <strong>${pct}%</strong> of your outflow — ${INR0(emi)}.`);
+  }
+
+  // Late-night transactions (conditional)
+  const night = debits.filter(t => { const h = t.dateObj?.getHours(); return h >= 22 || h <= 5; });
+  if (night.length > 0) {
+    const nightTotal = night.reduce((s, t) => s + t.amount, 0);
+    lines.push(`<strong>${night.length}</strong> transaction${night.length !== 1 ? 's' : ''} happened after 10 PM or before 6 AM, totalling ${INR0(nightTotal)}.`);
+  }
+
+  // Transaction average
+  if (debits.length > 0) {
+    const avgTxn = Math.round(totalD / debits.length);
+    lines.push(`${debits.length} debit transaction${debits.length !== 1 ? 's' : ''} this period, averaging <strong>${INR0(avgTxn)}</strong> each.`);
+  }
+
+  return lines;
 }
 
 // ── File handling ──

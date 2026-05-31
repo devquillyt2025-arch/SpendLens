@@ -232,19 +232,14 @@ tr:hover td { background: var(--s2); }
 .sb-mod { background: rgba(255,171,64,0.12); color: var(--amber); border: 1px solid #d97706; }
 .sb-bad { background: rgba(255,92,92,0.12); color: var(--red); border: 1px solid rgba(255,92,92,0.25); }
 
-/* AI Analysis */
-.ai-card { background: var(--s1); border: 1px solid rgba(108,92,231,0.25); border-radius: var(--r); padding: 1.5rem; position: relative; overflow: hidden; }
-.ai-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-l), var(--pink)); }
-.ai-header { display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; }
-.ai-badge { font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; background: rgba(108,92,231,0.15); color: var(--accent-l); border: 1px solid rgba(108,92,231,0.3); padding: 3px 10px; border-radius: 100px; }
-.ai-model { font-size: 10px; color: var(--t3); font-family: 'JetBrains Mono', monospace; margin-left: auto; }
-.ai-body { font-size: 13px; color: var(--t2); line-height: 1.8; white-space: pre-wrap; }
-.ai-body strong { color: var(--t1); font-weight: 600; }
-.ai-loading { display: flex; align-items: center; gap: 10px; color: var(--t3); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
-.ai-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
-.ai-dot:nth-child(2) { animation-delay: 0.2s; }
-.ai-dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.1); } }
+/* Spending Summary */
+.summary-card { background: var(--s1); border: 1px solid rgba(108,92,231,0.15); border-radius: var(--r); padding: 1.5rem; }
+.summary-body { font-size: 13px; color: var(--t2); line-height: 1.8; }
+.summary-body ul { list-style: none; margin: 0; padding: 0; }
+.summary-body li { padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+.summary-body li:last-child { border-bottom: none; }
+.summary-body li::before { content: '›'; margin-right: 8px; color: var(--accent-l); font-weight: 700; }
+.summary-body strong { color: var(--t1); font-weight: 600; }
 
 .fade-in { animation: fi 0.45s ease forwards; }
 @keyframes fi { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }

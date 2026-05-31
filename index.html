@@ -42,7 +42,7 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
     <span>✓ Google Pay statements</span>
     <span>✓ Runs in browser</span>
     <span>✓ Private & secure</span>
-    <span>✓ AI-powered insights</span>
+    <span>✓ Smart insights</span>
   </div>
 </div>
 
@@ -154,19 +154,9 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
       </div>
     </div>
 
-    <div class="sec"><span>AI Analysis</span></div>
-    <div class="ai-card">
-      <div class="ai-header">
-        <div class="ai-badge">AI · GPT-4o mini</div>
-        <div class="ai-model">powered by OpenAI</div>
-      </div>
-      <div class="ai-body">
-        <div class="ai-loading" id="aiLoading" style="display:none;">
-          <div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div>
-          <span style="margin-left:4px;">Analysing your spending...</span>
-        </div>
-        <div id="aiText" style="color:var(--t3); font-size:12px;">AI analysis will appear here after your PDF is processed.</div>
-      </div>
+    <div class="sec"><span>Spending Summary</span></div>
+    <div class="summary-card">
+      <div id="summaryText" class="summary-body"></div>
     </div>
 
     <div class="sec"><span>Behavior insights</span></div>
