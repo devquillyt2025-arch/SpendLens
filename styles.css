@@ -21,6 +21,7 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { background: var(--bg); color: var(--t1); font-family: 'Inter', sans-serif; min-height: 100vh; overflow-x: hidden; }
+img, canvas, svg { max-width: 100%; }
 .mono { font-family: 'JetBrains Mono', monospace; }
 
 body::before {
@@ -52,6 +53,11 @@ body::before {
 .brand-logo { display: block; height: auto; object-fit: contain; }
 .brand-logo--upload { width: clamp(190px, 16vw, 260px); }
 .brand-logo--topbar { width: 142px; }
+.mobile-logo-lockup { display: none; align-items: center; gap: 8px; }
+.mobile-logo-mark { width: 36px; height: 36px; flex: 0 0 auto; }
+.mobile-logo-word { display: inline-flex; align-items: baseline; font-size: 18px; line-height: 1; letter-spacing: 0; }
+.mobile-logo-word span:first-child { color: #f1f5f9; font-weight: 700; }
+.mobile-logo-word span:last-child { color: #8b5cf6; font-weight: 400; }
 .upload-title {
   font-size: clamp(2.2rem, 5vw, 3.8rem); font-weight: 700; line-height: 1.1;
   text-align: center; margin-bottom: 0.9rem; letter-spacing: -0.02em;
@@ -203,7 +209,6 @@ body::before {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem;
   margin-bottom: 2rem;
 }
-@media (max-width: 720px) { .preview-grid { grid-template-columns: 1fr; } }
 .preview-card {
   background: #1a1a2e; border: 1px solid rgba(139,92,246,0.2);
   border-radius: var(--r); padding: 1.1rem 1.1rem 1.25rem;
@@ -240,6 +245,164 @@ body::before {
   padding-top: 1.25rem;
   border-top: 1px solid var(--b1);
   font-size: 11px; color: var(--t3); letter-spacing: 0.02em;
+}
+
+@media (max-width: 768px) {
+  #upload-screen {
+    padding: 72px 0 2.5rem;
+  }
+
+  .upload-nav {
+    padding: 12px 16px;
+  }
+
+  .brand-logo--upload {
+    display: none;
+  }
+
+  .mobile-logo-lockup {
+    display: inline-flex;
+  }
+
+  .upload-title {
+    font-size: 36px;
+    line-height: 1.2;
+    margin-bottom: 0.75rem;
+    padding: 0 16px;
+  }
+
+  .upload-sub {
+    font-size: 15px;
+    line-height: 1.65;
+    max-width: 100%;
+    margin-bottom: 1.25rem;
+    padding: 0 16px;
+    text-wrap: pretty;
+  }
+
+  .drop-zone {
+    width: calc(100% - 32px);
+    max-width: none;
+    margin: 0 16px;
+    padding: 1rem 1rem 0.9rem;
+  }
+
+  .drop-icon {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 0.7rem;
+    font-size: 20px;
+    border-radius: 12px;
+  }
+
+  .drop-title {
+    font-size: 1rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .drop-hint {
+    font-size: 12px;
+  }
+
+  .btn-primary {
+    width: 100%;
+    height: 52px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1rem;
+    padding: 0 1rem;
+  }
+
+  .upload-trust {
+    margin-top: 0.75rem;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .upload-tags {
+    width: calc(100% - 32px);
+    max-width: 100%;
+    gap: 6px;
+    margin-top: 1.1rem;
+  }
+
+  .upload-tags span {
+    font-size: 11px;
+    padding: 3px 9px;
+  }
+
+  .preview-section {
+    max-width: none;
+    margin-top: 2rem;
+    padding: 0 16px 4rem;
+  }
+
+  .preview-heading {
+    font-size: 22px;
+    line-height: 1.25;
+    margin-bottom: 1.5rem;
+  }
+
+  .preview-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .preview-card {
+    width: 100%;
+    height: 240px;
+    padding: 1rem;
+  }
+
+  .preview-chart-wrap {
+    height: 170px;
+  }
+
+  .preview-txn-list {
+    gap: 0.8rem;
+  }
+
+  .preview-footer {
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.4rem;
+    text-align: center;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  body::before {
+    background-size: 36px 36px;
+  }
+
+  #upload-screen {
+    padding-top: 70px;
+  }
+
+  .upload-glow {
+    width: 420px;
+    height: 320px;
+  }
+
+  .upload-title {
+    max-width: 343px;
+  }
+
+  .upload-sub {
+    text-align: center;
+  }
+
+  .drop-zone {
+    width: calc(100% - 32px);
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
+  .scroll-hint {
+    bottom: 1rem;
+  }
 }
 
 /* ── Loading ── */
