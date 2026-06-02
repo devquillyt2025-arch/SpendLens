@@ -18,6 +18,7 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -25,9 +26,32 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
 <!-- UPLOAD -->
 <div id="upload-screen">
   <div class="upload-glow"></div>
-  <div class="upload-badge">SpendLens · UPI Analytics</div>
+  <nav class="upload-nav">
+    <div class="upload-nav-logo">
+      <svg class="logo-icon" width="44" height="44" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="navGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#8b5cf6"/>
+            <stop offset="100%" stop-color="#6d28d9"/>
+          </linearGradient>
+          <clipPath id="navClip"><circle cx="22" cy="22" r="11.5"/></clipPath>
+        </defs>
+        <rect width="44" height="44" rx="11" fill="url(#navGrad)"/>
+        <g clip-path="url(#navClip)" fill="white" fill-opacity="0.9">
+          <rect x="11" y="22" width="4" height="8"  rx="1"/>
+          <rect x="17" y="16" width="4" height="14" rx="1"/>
+          <rect x="23" y="12" width="4" height="18" rx="1"/>
+          <rect x="29" y="18" width="4" height="12" rx="1"/>
+        </g>
+        <line x1="10" y1="30" x2="34" y2="30" stroke="white" stroke-opacity="0.3" stroke-width="1" clip-path="url(#navClip)"/>
+        <circle cx="22" cy="22" r="13" stroke="white" stroke-width="2.5"/>
+        <line x1="31.2" y1="31.2" x2="38" y2="38" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-wordmark"><span class="logo-spend">Spend</span><span class="logo-lens">Lens</span></span>
+    </div>
+  </nav>
   <h1 class="upload-title">Know where every<br>rupee went</h1>
-  <p class="upload-sub">Upload your PhonePe or Google Pay statement PDF for instant spending analytics — everything runs in your browser.</p>
+  <p class="upload-sub">Drop your PhonePe or GPay PDF. Get a full spending breakdown in seconds. No signup, no server, nothing uploaded.</p>
 
   <div class="drop-zone" id="dropZone">
     <div class="drop-icon">📄</div>
@@ -35,6 +59,7 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
     <div class="drop-hint">PhonePe or Google Pay · or click to browse</div>
     <input type="file" id="fileInput" accept=".pdf" style="display:none;">
     <span class="btn-primary">Choose file</span>
+    <p class="upload-trust">No account needed · Your data never leaves your browser</p>
   </div>
 
   <div class="upload-tags">
@@ -42,7 +67,67 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
     <span>✓ Google Pay statements</span>
     <span>✓ Runs in browser</span>
     <span>✓ Private & secure</span>
-    <span>✓ Smart insights</span>
+    <span>✓ Spend patterns</span>
+  </div>
+
+  <div class="scroll-hint">
+    <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
+  </div>
+
+  <!-- Below-fold preview -->
+  <div class="preview-section">
+    <div class="preview-divider"></div>
+    <h2 class="preview-heading">Your statement, visualised</h2>
+
+    <div class="preview-grid">
+
+      <div class="preview-card">
+        <span class="preview-card-title">Spend by Category</span>
+        <div class="preview-chart-wrap"><canvas id="previewDonut"></canvas></div>
+        <div class="preview-overlay"><span class="preview-lock-label">Your data will appear here</span></div>
+      </div>
+
+      <div class="preview-card">
+        <span class="preview-card-title">Cumulative Spend</span>
+        <div class="preview-chart-wrap"><canvas id="previewLine"></canvas></div>
+        <div class="preview-overlay"><span class="preview-lock-label">Your data will appear here</span></div>
+      </div>
+
+      <div class="preview-card">
+        <span class="preview-card-title">Recent Transactions</span>
+        <div class="preview-txn-list">
+          <div class="preview-txn-row">
+            <span class="preview-txn-dot" style="background:#ff5c5c;"></span>
+            <div class="preview-txn-info"><span class="preview-txn-name">Swiggy</span><span class="preview-txn-cat">Food &amp; Dining</span></div>
+            <span class="preview-txn-amt">−₹349</span>
+          </div>
+          <div class="preview-txn-row">
+            <span class="preview-txn-dot" style="background:#4d9fff;"></span>
+            <div class="preview-txn-info"><span class="preview-txn-name">Delhi Metro Rail</span><span class="preview-txn-cat">Transport</span></div>
+            <span class="preview-txn-amt">−₹210</span>
+          </div>
+          <div class="preview-txn-row">
+            <span class="preview-txn-dot" style="background:#ffab40;"></span>
+            <div class="preview-txn-info"><span class="preview-txn-name">HP Petrol Pump</span><span class="preview-txn-cat">Fuel</span></div>
+            <span class="preview-txn-amt">−₹2,000</span>
+          </div>
+          <div class="preview-txn-row">
+            <span class="preview-txn-dot" style="background:#00c896;"></span>
+            <div class="preview-txn-info"><span class="preview-txn-name">Zomato</span><span class="preview-txn-cat">Food &amp; Dining</span></div>
+            <span class="preview-txn-amt">−₹520</span>
+          </div>
+        </div>
+        <div class="preview-overlay"><span class="preview-lock-label">Your data will appear here</span></div>
+      </div>
+
+    </div>
+
+    <p class="preview-privacy">Everything is computed in your browser. Your statement is never sent anywhere.</p>
+
+    <footer class="preview-footer">
+      <span>© 2026 SpendLens</span>
+      <span>Made for Indian UPI users</span>
+    </footer>
   </div>
 </div>
 
@@ -55,7 +140,28 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
 <!-- DASHBOARD -->
 <div id="dashboard">
   <div class="topbar">
-    <div class="topbar-logo">SpendLens</div>
+    <div class="topbar-logo">
+      <svg class="logo-icon" width="30" height="30" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="topGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#8b5cf6"/>
+            <stop offset="100%" stop-color="#6d28d9"/>
+          </linearGradient>
+          <clipPath id="topClip"><circle cx="22" cy="22" r="11.5"/></clipPath>
+        </defs>
+        <rect width="44" height="44" rx="11" fill="url(#topGrad)"/>
+        <g clip-path="url(#topClip)" fill="white" fill-opacity="0.9">
+          <rect x="11" y="22" width="4" height="8"  rx="1"/>
+          <rect x="17" y="16" width="4" height="14" rx="1"/>
+          <rect x="23" y="12" width="4" height="18" rx="1"/>
+          <rect x="29" y="18" width="4" height="12" rx="1"/>
+        </g>
+        <line x1="10" y1="30" x2="34" y2="30" stroke="white" stroke-opacity="0.3" stroke-width="1" clip-path="url(#topClip)"/>
+        <circle cx="22" cy="22" r="13" stroke="white" stroke-width="2.5"/>
+        <line x1="31.2" y1="31.2" x2="38" y2="38" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <span class="logo-wordmark logo-wordmark--sm"><span class="logo-spend">Spend</span><span class="logo-lens">Lens</span></span>
+    </div>
     <div class="topbar-meta" id="topbarMeta">—</div>
     <div style="display:flex;gap:8px;align-items:center;">
       <button class="btn-ghost" id="dlBtn" style="display:none;" onclick="downloadExcel()">↓ Excel</button>

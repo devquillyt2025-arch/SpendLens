@@ -1582,3 +1582,49 @@ dropZone.addEventListener('drop', function(e) {
 // hydrateSession() is called after all DOM listeners are registered so renderDashboard
 // can safely wire up chart events and interactive elements.
 hydrateSession();
+
+// ── Preview section: dummy charts rendered on landing page ────────────────
+(function initPreviewCharts() {
+  const donutEl = document.getElementById('previewDonut');
+  const lineEl  = document.getElementById('previewLine');
+  if (!donutEl || !lineEl || typeof Chart === 'undefined') return;
+
+  new Chart(donutEl, {
+    type: 'doughnut',
+    data: {
+      labels: ['Food & Dining', 'Fuel', 'Bills', 'Transport', 'Groceries'],
+      datasets: [{
+        data: [4820, 3200, 2100, 1840, 1560],
+        backgroundColor: ['#ff5c5c', '#ffab40', '#4d9fff', '#00c896', '#a29bfe'],
+        borderWidth: 0, hoverOffset: 0
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '66%',
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      animation: false
+    }
+  });
+
+  const daily = [96, 1240, 349, 2800, 520, 210, 4200, 680, 349, 1560, 2100, 440, 3200, 520, 890, 210, 1100, 640, 349, 820];
+  let run = 0;
+  const cumul = daily.map(v => { const p = run; run += v; return p; });
+
+  new Chart(lineEl, {
+    type: 'line',
+    data: {
+      labels: daily.map((_, i) => i + 1),
+      datasets: [{
+        data: cumul,
+        borderColor: '#ff5c5c', backgroundColor: 'rgba(255,92,92,0.07)',
+        borderWidth: 1.5, fill: true, tension: 0.4, pointRadius: 0
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      scales: { x: { display: false }, y: { display: false, min: 0 } },
+      animation: false
+    }
+  });
+})();
