@@ -39,6 +39,24 @@ function fmtAmt(n, opts = {}) {
   return `<span class="mv-sym">₹</span><span class="mv-int">${intPart}</span>${decPart ? `<span class="mv-dec">.${decPart}</span>` : ''}`;
 }
 
+// ── Spending-health overrides ──
+const HEALTH_STORAGE_KEY = 'spendlens_health_overrides';
+
+let healthOverrides = {};
+try {
+  const stored = sessionStorage.getItem(HEALTH_STORAGE_KEY);
+  if (stored) healthOverrides = JSON.parse(stored);
+} catch (_) {}
+
+function setHealthOverride(cat, tag) {
+  healthOverrides[cat] = tag;
+  try { sessionStorage.setItem(HEALTH_STORAGE_KEY, JSON.stringify(healthOverrides)); } catch (_) {}
+}
+
+function getHealthTag(cat) {
+  return healthOverrides[cat] ?? CATEGORY_HEALTH[cat] ?? 'neutral';
+}
+
 // ── Categories ──
 const CATS = [
   { name: 'Food & dining',      color: '#4d9fff', kw: ['hotel','cafe','restaurant','food','tiffin','canteen','swiggy','zomato','bhojanalaya','khanavali','gokula','annapoorn','avenue food','udupi','majestic'] },
@@ -320,6 +338,128 @@ function hydrateSession() {
     document.getElementById('dashboard').style.display     = 'none';
   }
 }
+
+// ── Spending Health ──────────────────────────────────────────────────────────
+
+function computeHealthTotals(transactions) {
+  const totals = { good: 0, neutral: 0, bad: 0 };
+  transactions
+    .filter(t => t.type === 'Debit')
+    .forEach(t => {
+      const tag = getHealthTag(t.category);
+      totals[tag] += t.amount;
+    });
+  const sum = totals.good + totals.neutral + totals.bad;
+  const goodRatio = sum > 0 ? Math.min(1, Math.max(0, totals.good / sum)) : 0;
+  return { totals, goodRatio };
+}
+
+function buildGaugeSVG(totals, goodRatio) {
+  const sum = totals.good + totals.neutral + totals.bad || 1;
+
+  // Raw degree allocations (rounding remainder absorbed into good)
+  let badDeg     = Math.round(totals.bad     / sum * 180);
+  let neutralDeg = Math.round(totals.neutral / sum * 180);
+  let goodDeg    = Math.max(0, 180 - badDeg - neutralDeg);
+
+  // Fix 2: enforce minimum 4° per zone so no zone is invisible;
+  // steal any excess from whichever bucket is currently largest.
+  const MIN = 4;
+  [badDeg, neutralDeg, goodDeg] = [badDeg, neutralDeg, goodDeg].map((v, _, arr) => {
+    return v; // re-assigned below
+  });
+  let deficit = 0;
+  const zones = [badDeg, neutralDeg, goodDeg];
+  for (let i = 0; i < 3; i++) {
+    if (zones[i] < MIN) { deficit += MIN - zones[i]; zones[i] = MIN; }
+  }
+  if (deficit > 0) {
+    const maxI = zones.indexOf(Math.max(...zones));
+    zones[maxI] = Math.max(MIN, zones[maxI] - deficit);
+    // Re-reconcile so the three always sum to exactly 180
+    const diff = 180 - zones.reduce((s, v) => s + v, 0);
+    zones[zones.indexOf(Math.max(...zones))] += diff;
+  }
+  [badDeg, neutralDeg, goodDeg] = zones;
+
+  const pct  = Math.round(goodRatio * 100);
+  const PATH = 'M 60 140 A 100 100 0 0 1 260 140';
+
+  // pathLength="180" maps dasharray values directly to degrees
+  const zone = (color, dash, offset) =>
+    `<path d="${PATH}" pathLength="180" fill="none" stroke="${color}" stroke-width="28" stroke-linecap="butt" stroke-dasharray="${dash} 180" stroke-dashoffset="${offset}"/>`;
+
+  const rotateDeg = goodRatio * 180 - 90;
+
+  return `<div class="sh-gauge-wrap">
+  <svg viewBox="40 20 280 140" width="100%" style="max-width:320px;display:block;margin:0 auto;" aria-label="Spending health: ${pct}% good">
+    <path d="${PATH}" pathLength="180" fill="none" stroke="#333" stroke-width="28" stroke-linecap="butt"/>
+    ${zone('#e05555', badDeg,     0)}
+    ${zone('#f0a030', neutralDeg, -badDeg)}
+    ${zone('#3cc68a', goodDeg,    -(badDeg + neutralDeg))}
+    <text x="160" y="115" text-anchor="middle" style="fill:#ececf1;font-size:26px;font-weight:500;font-family:Inter,sans-serif;">${pct}%</text>
+    <text x="160" y="132" text-anchor="middle" style="fill:#8888a0;font-size:10px;font-family:Inter,sans-serif;letter-spacing:0.1em;text-transform:uppercase;">good spending ratio</text>
+    <g id="sh-needle-g" transform="rotate(${rotateDeg}, 160, 140)" style="transition:transform 0.6s ease-out;">
+      <line x1="160" y1="140" x2="160" y2="55" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"/>
+      <circle cx="160" cy="140" r="5" fill="#ffffff"/>
+    </g>
+  </svg>
+</div>`;
+}
+
+function buildHealthBuckets(totals, catBuckets) {
+  const CONFIG = [
+    { key: 'good',    label: 'Good', color: '#639922', bg: 'rgba(101,153,34,0.08)',  border: 'rgba(101,153,34,0.22)'  },
+    { key: 'neutral', label: 'Okay', color: '#854F0B', bg: 'rgba(133,79,11,0.08)',   border: 'rgba(133,79,11,0.22)'   },
+    { key: 'bad',     label: 'Bad',  color: '#A32D2D', bg: 'rgba(163,45,45,0.08)',   border: 'rgba(163,45,45,0.22)'   }
+  ];
+  return `<div class="sh-buckets">${CONFIG.map(({ key, label, color, bg, border }) => {
+    const cats = catBuckets[key] || [];
+    const names = cats.map(c => c.cat).join(', ') || '—';
+    return `<div class="sh-bucket" style="background:${bg};border:1px solid ${border};">
+      <div class="sh-bucket-label" style="color:${color};">${label}</div>
+      <div class="sh-bucket-amount">${INR0(totals[key] || 0)}</div>
+      <div class="sh-bucket-cats">${escHtml(names)}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+
+function renderSpendingHealth(transactions) {
+  const el = document.getElementById('spending-health');
+  if (!el) return;
+
+  const debits = transactions.filter(t => t.type === 'Debit');
+
+  // Aggregate spend per category
+  const catData = {};
+  debits.forEach(t => {
+    catData[t.category] = (catData[t.category] || 0) + t.amount;
+  });
+
+  // Bucket totals and category lists by health tag
+  const totals     = { good: 0, neutral: 0, bad: 0 };
+  const catBuckets = { good: [], neutral: [], bad: [] };
+  Object.entries(catData).forEach(([cat, amount]) => {
+    const tag = getHealthTag(cat);
+    totals[tag] += amount;
+    catBuckets[tag].push({ cat, amount });
+  });
+
+  const sum       = totals.good + totals.neutral + totals.bad;
+  const goodRatio = sum > 0 ? Math.min(1, Math.max(0, totals.good / sum)) : 0;
+
+  el.innerHTML =
+    buildGaugeSVG(totals, goodRatio) +
+    buildHealthBuckets(totals, catBuckets);
+
+  const targetDeg = goodRatio * 180 - 90;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const g = document.getElementById('sh-needle-g');
+    if (g) g.setAttribute('transform', `rotate(${targetDeg}, 160, 140)`);
+  }));
+}
+
 
 // ── Dashboard ──
 function renderDashboard(txns) {
@@ -937,6 +1077,8 @@ function renderDashboard(txns) {
   document.getElementById('summaryText').innerHTML = '<ul>' + summaryLines.map(l => `<li>${l}</li>`).join('') + '</ul>';
 
   document.getElementById('dlBtn').style.display = 'inline-block';
+
+  renderSpendingHealth(txns);
 }
 
 // Slice + rebaseline a cumulative series to the requested range window
