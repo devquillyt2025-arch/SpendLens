@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SpendLens — UPI Analytics</title>
+<title>SpendLens</title>
 <script>
 // Runs synchronously before any body element is painted.
 // If a valid session exists, inject a style rule that hides the upload screen
@@ -41,10 +41,10 @@ if(d&&d.v===1&&Array.isArray(d.txns)&&d.txns.length){
   <div class="drop-zone" id="dropZone">
     <div class="drop-icon">📄</div>
     <div class="drop-title">Drop your statement PDF</div>
-    <div class="drop-hint">PhonePe or Google Pay · or click to browse</div>
+    <div class="drop-hint">Drop your PhonePe or GPay statement · or click to browse</div>
     <input type="file" id="fileInput" accept=".pdf" style="display:none;">
     <span class="btn-primary">Choose file</span>
-    <p class="upload-trust">No account needed · Your data never leaves your browser</p>
+    <p class="upload-trust">Supports .pdf · Your data never leaves your browser</p>
   </div>
 
   <div class="upload-tags">

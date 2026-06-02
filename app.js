@@ -14,6 +14,17 @@ if (typeof pdfjsLib === 'undefined' || typeof Chart === 'undefined') {
 }
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
+// Hide scroll arrow when there is nothing below to scroll to
+(function () {
+  const hint = document.querySelector('.scroll-hint');
+  if (!hint) return;
+  const update = () => {
+    hint.style.display = document.documentElement.scrollHeight > window.innerHeight ? '' : 'none';
+  };
+  update();
+  window.addEventListener('resize', update);
+})();
+
 const INR0 = n => n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 const INR2 = n => n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Consistent YYYY-MM-DD key for date lookups across both PhonePe and GPay date string formats
