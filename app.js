@@ -537,12 +537,17 @@ function renderDashboard(txns) {
   }
 
   // Initialise shared state with debit + all as the default view
-  const initView = buildCumulView({ days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily }, 'debit', 'all');
+  const initDebitView  = buildCumulView({ days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily }, 'debit',  'all');
+  const initCreditView = buildCumulView({ days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily }, 'credit', 'all');
   cumulState = {
     mode: 'debit', range: 'all',
     days: cDays, debitDaily: cDebitDaily, creditDaily: cCreditDaily,
-    viewDays:  initView.viewDays,  viewDaily: initView.viewDaily,
-    viewCumul: initView.viewCumul, viewPeak:  initView.viewPeak
+    // primary single-mode view
+    viewDays:  initDebitView.viewDays,  viewDaily: initDebitView.viewDaily,
+    viewCumul: initDebitView.viewCumul, viewTotal: initDebitView.viewTotal, viewPeak: initDebitView.viewPeak,
+    // both-mode series (always kept in sync with current range)
+    viewDailyD: initDebitView.viewDaily,  viewCumulD: initDebitView.viewCumul,  viewTotalD: initDebitView.viewTotal,
+    viewDailyC: initCreditView.viewDaily, viewCumulC: initCreditView.viewCumul, viewTotalC: initCreditView.viewTotal,
   };
 
   const cumulPlugin = {
@@ -572,14 +577,68 @@ function renderDashboard(txns) {
         ctx.restore();
       }
 
-      // ── Average daily spend line ─────────────────────────────────────────────
-      // Computed fresh from the active view so it updates with every mode/range change.
-      const totalCumul = viewCumul.length ? viewCumul[viewCumul.length - 1] : 0;
-      const avgPerDay  = viewDays.length  ? totalCumul / viewDays.length : 0;
+      const isBoth = cumulState.mode === 'both';
+
+      if (isBoth) {
+        // ── Both mode: two average lines (debit red, credit green) ──────────────
+        const fmtAvg = v => (v >= 1000
+          ? '₹' + (v / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+          : '₹' + Math.round(v).toLocaleString('en-IN'));
+        const drawAvgLine = (avgVal, stroke, label) => {
+          if (!(avgVal > 0)) return;
+          const avgY = y.getPixelForValue(avgVal);
+          if (avgY <= top || avgY >= bottom) return;
+          ctx.save();
+          ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.setLineDash([6, 3]);
+          ctx.beginPath(); ctx.moveTo(left, avgY); ctx.lineTo(right, avgY); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.font = '500 9px JetBrains Mono, monospace';
+          const aw = ctx.measureText(label).width + 6;
+          ctx.fillStyle = 'rgba(18,18,28,0.75)';
+          ctx.fillRect(right - aw - 1, avgY - 7, aw + 2, 14);
+          ctx.fillStyle = stroke; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+          ctx.fillText(label, right - 3, avgY);
+          ctx.restore();
+        };
+        const avgD = viewDays.length ? cumulState.viewTotalD / viewDays.length : 0;
+        const avgC = viewDays.length ? cumulState.viewTotalC / viewDays.length : 0;
+        drawAvgLine(avgD, 'rgba(255,92,92,0.75)',   'Avg ' + fmtAvg(avgD) + '/day spent');
+        drawAvgLine(avgC, 'rgba(0,200,150,0.75)',   'Avg ' + fmtAvg(avgC) + '/day received');
+
+        // ── Crossover marker: first day credit cumul overtakes debit cumul ──────
+        const vD = cumulState.viewCumulD, vC = cumulState.viewCumulC;
+        let crossIdx = -1;
+        for (let i = 1; i < vD.length; i++) {
+          if (vC[i] >= vD[i] && vC[i - 1] < vD[i - 1]) { crossIdx = i; break; }
+        }
+        if (crossIdx >= 0) {
+          const cxPx = x.getPixelForValue(labels[crossIdx]);
+          const midVal = (vD[crossIdx] + vC[crossIdx]) / 2;
+          const cyPx  = y.getPixelForValue(midVal);
+          if (cxPx >= left && cxPx <= right && cyPx >= top && cyPx <= bottom) {
+            ctx.save();
+            ctx.beginPath(); ctx.arc(cxPx, cyPx, 5, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255,230,80,0.45)'; ctx.fill();
+            ctx.strokeStyle = 'rgba(255,230,80,0.85)'; ctx.lineWidth = 1.2; ctx.stroke();
+            const lbl = 'Net +';
+            ctx.font = '600 9px Inter, sans-serif';
+            const lw2 = ctx.measureText(lbl).width + 8;
+            const lx2 = Math.min(cxPx + 8, right - lw2);
+            ctx.fillStyle = 'rgba(18,18,28,0.88)';
+            ctx.fillRect(lx2, cyPx - 9, lw2, 14);
+            ctx.fillStyle = 'rgba(255,230,80,0.95)'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+            ctx.fillText(lbl, lx2 + 4, cyPx - 2);
+            ctx.restore();
+          }
+        }
+        return; // skip single-mode peak annotation in both mode
+      }
+
+      // ── Single mode: average line (amber) ────────────────────────────────────
+      const avgPerDay  = viewDays.length ? (cumulState.viewTotal ?? 0) / viewDays.length : 0;
       if (avgPerDay > 0) {
         const avgY = y.getPixelForValue(avgPerDay);
         if (avgY > top && avgY < bottom) {
-          // Amber + [6,3] dash — visually distinct from the crosshair's white [4,4] hair
           ctx.save();
           ctx.strokeStyle = 'rgba(255,171,64,0.38)';
           ctx.lineWidth   = 1;
@@ -602,9 +661,6 @@ function renderDashboard(txns) {
       }
 
       // ── Peak annotation ──────────────────────────────────────────────────────
-      // Re-derive the peak index live from the current viewDaily on every draw.
-      // This guarantees it is always correct for the active mode + range without
-      // relying on any cached value in cumulState.viewPeak.
       if (!viewDaily.length) return;
       const peakIdx = viewDaily.reduce((b, v, i) => v > viewDaily[b] ? i : b, 0);
       if (viewDaily[peakIdx] <= 0) return;
@@ -634,15 +690,23 @@ function renderDashboard(txns) {
     type: 'line',
     data: {
       labels: cumulState.viewDays.map(d => d.getDate() + '/' + (d.getMonth() + 1)),
-      datasets: [{
-        data: cumulState.viewCumul,
-        borderColor: '#ff5c5c', backgroundColor: 'rgba(255,92,92,0.07)',
-        borderWidth: 2, fill: true, tension: 0.35, clip: false,
-        pointRadius:          cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 6 : (v > 0 ? 2 : 0)),
-        pointBackgroundColor: cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#ffab40' : '#ff5c5c'),
-        pointBorderColor:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#fff'    : '#ff5c5c'),
-        pointBorderWidth:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 2         : 0)
-      }]
+      datasets: [
+        {
+          data: cumulState.viewCumul,
+          borderColor: '#ff5c5c', backgroundColor: 'rgba(255,92,92,0.07)',
+          borderWidth: 2, fill: true, tension: 0.35, clip: false,
+          pointRadius:          cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 6 : (v > 0 ? 2 : 0)),
+          pointBackgroundColor: cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#ffab40' : '#ff5c5c'),
+          pointBorderColor:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? '#fff'    : '#ff5c5c'),
+          pointBorderWidth:     cumulState.viewDaily.map((v, i) => i === cumulState.viewPeak ? 2         : 0)
+        },
+        {
+          data: [], hidden: true,
+          borderColor: '#00c896', backgroundColor: 'rgba(0,200,150,0.1)',
+          borderWidth: 2, fill: true, tension: 0.35, clip: false,
+          pointRadius: [], pointBackgroundColor: [], pointBorderColor: [], pointBorderWidth: []
+        }
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -873,25 +937,38 @@ function buildCumulView(state, mode, range) {
   const viewDays  = state.days.slice(start);
   const viewDaily = rawDaily.slice(start);
   let run = 0;
-  const viewCumul = viewDaily.map(v => { run += v; return run; });
+  const viewCumul = viewDaily.map(v => { const prev = run; run += v; return prev; });
+  const viewTotal = run;
   const viewPeak  = viewDaily.length ? viewDaily.reduce((b, v, i) => v > viewDaily[b] ? i : b, 0) : 0;
-  return { viewDays, viewDaily, viewCumul, viewPeak };
+  return { viewDays, viewDaily, viewCumul, viewTotal, viewPeak };
 }
 
-// Colour-matched active styling for the Debit / Credit toggle
+// Colour-matched active styling for the Debit / Credit / Both toggle
 function applyCumulToggleStyle(mode) {
-  const isDebit   = mode === 'debit';
+  const isDebit  = mode === 'debit';
+  const isCredit = mode === 'credit';
+  const isBoth   = mode === 'both';
   const debitBtn  = document.getElementById('cumulDebitBtn');
   const creditBtn = document.getElementById('cumulCreditBtn');
-  if (!debitBtn || !creditBtn) return;
-  debitBtn.classList.toggle('active', isDebit);
-  creditBtn.classList.toggle('active', !isDebit);
-  debitBtn.style.borderColor  = isDebit  ? '#ff5c5c' : '';
-  debitBtn.style.color        = isDebit  ? '#ff5c5c' : '';
-  debitBtn.style.background   = isDebit  ? 'rgba(255,92,92,0.1)' : '';
-  creditBtn.style.borderColor = !isDebit ? '#00c896' : '';
-  creditBtn.style.color       = !isDebit ? '#00c896' : '';
-  creditBtn.style.background  = !isDebit ? 'rgba(0,200,150,0.1)' : '';
+  const bothBtn   = document.getElementById('cumulBothBtn');
+  if (debitBtn) {
+    debitBtn.classList.toggle('active', isDebit);
+    debitBtn.style.borderColor = isDebit ? '#ff5c5c' : '';
+    debitBtn.style.color       = isDebit ? '#ff5c5c' : '';
+    debitBtn.style.background  = isDebit ? 'rgba(255,92,92,0.1)' : '';
+  }
+  if (creditBtn) {
+    creditBtn.classList.toggle('active', isCredit);
+    creditBtn.style.borderColor = isCredit ? '#00c896' : '';
+    creditBtn.style.color       = isCredit ? '#00c896' : '';
+    creditBtn.style.background  = isCredit ? 'rgba(0,200,150,0.1)' : '';
+  }
+  if (bothBtn) {
+    bothBtn.classList.toggle('active', isBoth);
+    bothBtn.style.borderColor = isBoth ? '#9090b8' : '';
+    bothBtn.style.color       = isBoth ? '#e2e2f0' : '';
+    bothBtn.style.background  = isBoth ? 'linear-gradient(90deg, rgba(255,92,92,0.15) 50%, rgba(0,200,150,0.15) 50%)' : '';
+  }
 }
 
 // Highlight the active range pill
@@ -902,43 +979,81 @@ function applyCumulRangeStyle(range) {
   });
 }
 
-// Central update: called by both mode toggle and range selector
+// Central update: called by mode toggle and range selector
 function updateCumul(mode, range) {
   if (!cumulState || !charts.cumul) return;
-  cumulState.mode = mode;
+  cumulState.mode  = mode;
   cumulState.range = range;
 
-  const view = buildCumulView(cumulState, mode, range);
-  cumulState.viewDays  = view.viewDays;
-  cumulState.viewDaily = view.viewDaily;
-  cumulState.viewCumul = view.viewCumul;
-  cumulState.viewPeak  = view.viewPeak;
+  // Always build both series so both-mode fields stay in sync with the current range
+  const dView = buildCumulView(cumulState, 'debit',  range);
+  const cView = buildCumulView(cumulState, 'credit', range);
 
+  cumulState.viewDays   = dView.viewDays; // same window for both series
+  cumulState.viewDailyD = dView.viewDaily; cumulState.viewCumulD = dView.viewCumul; cumulState.viewTotalD = dView.viewTotal;
+  cumulState.viewDailyC = cView.viewDaily; cumulState.viewCumulC = cView.viewCumul; cumulState.viewTotalC = cView.viewTotal;
+
+  const isBoth  = mode === 'both';
   const isDebit = mode === 'debit';
-  const color   = isDebit ? '#ff5c5c'              : '#00c896';
-  const bgColor = isDebit ? 'rgba(255,92,92,0.07)' : 'rgba(0,200,150,0.07)';
-  const { viewDays, viewDaily, viewCumul, viewPeak } = cumulState;
 
-  charts.cumul.data.labels = viewDays.map(d => d.getDate() + '/' + (d.getMonth() + 1));
-  const ds = charts.cumul.data.datasets[0];
-  ds.data             = viewCumul;
-  ds.borderColor      = color;
-  ds.backgroundColor  = bgColor;
-  ds.pointRadius          = viewDaily.map((v, i) => i === viewPeak ? 6 : (v > 0 ? 2 : 0));
-  ds.pointBackgroundColor = viewDaily.map((v, i) => i === viewPeak ? '#ffab40' : color);
-  ds.pointBorderColor     = viewDaily.map((v, i) => i === viewPeak ? '#fff'    : color);
-  ds.pointBorderWidth     = viewDaily.map((v, i) => i === viewPeak ? 2         : 0);
+  // Primary-mode view (used by single-mode plugin paths and crosshair)
+  const activeView = (mode === 'credit') ? cView : dView;
+  cumulState.viewDaily = activeView.viewDaily;
+  cumulState.viewCumul = activeView.viewCumul;
+  cumulState.viewTotal = activeView.viewTotal;
+  cumulState.viewPeak  = activeView.viewPeak;
+
+  const labels = dView.viewDays.map(d => d.getDate() + '/' + (d.getMonth() + 1));
+  charts.cumul.data.labels = labels;
+
+  // Dataset 0 — debit line in debit/both mode; credit line in credit mode
+  const ds0 = charts.cumul.data.datasets[0];
+  if (mode === 'credit') {
+    ds0.data = cView.viewCumul;
+    ds0.borderColor = '#00c896'; ds0.backgroundColor = 'rgba(0,200,150,0.07)';
+    ds0.pointRadius          = cView.viewDaily.map((v, i) => i === cView.viewPeak ? 6 : (v > 0 ? 2 : 0));
+    ds0.pointBackgroundColor = cView.viewDaily.map((v, i) => i === cView.viewPeak ? '#ffab40' : '#00c896');
+    ds0.pointBorderColor     = cView.viewDaily.map((v, i) => i === cView.viewPeak ? '#fff'    : '#00c896');
+    ds0.pointBorderWidth     = cView.viewDaily.map((v, i) => i === cView.viewPeak ? 2         : 0);
+  } else {
+    ds0.data = dView.viewCumul;
+    ds0.borderColor     = '#ff5c5c';
+    ds0.backgroundColor = isBoth ? 'rgba(255,92,92,0.1)' : 'rgba(255,92,92,0.07)';
+    ds0.pointRadius          = dView.viewDaily.map((v, i) => i === dView.viewPeak ? 6 : (v > 0 ? 2 : 0));
+    ds0.pointBackgroundColor = dView.viewDaily.map((v, i) => i === dView.viewPeak ? '#ffab40' : '#ff5c5c');
+    ds0.pointBorderColor     = dView.viewDaily.map((v, i) => i === dView.viewPeak ? '#fff'    : '#ff5c5c');
+    ds0.pointBorderWidth     = dView.viewDaily.map((v, i) => i === dView.viewPeak ? 2         : 0);
+  }
+  ds0.hidden = false;
+
+  // Dataset 1 — credit line, only visible in 'both' mode
+  const ds1 = charts.cumul.data.datasets[1];
+  if (isBoth) {
+    ds1.data = cView.viewCumul;
+    ds1.borderColor = '#00c896'; ds1.backgroundColor = 'rgba(0,200,150,0.1)';
+    ds1.pointRadius          = cView.viewDaily.map((v, i) => i === cView.viewPeak ? 6 : (v > 0 ? 2 : 0));
+    ds1.pointBackgroundColor = cView.viewDaily.map((v, i) => i === cView.viewPeak ? '#ffab40' : '#00c896');
+    ds1.pointBorderColor     = cView.viewDaily.map((v, i) => i === cView.viewPeak ? '#fff'    : '#00c896');
+    ds1.pointBorderWidth     = cView.viewDaily.map((v, i) => i === cView.viewPeak ? 2         : 0);
+    ds1.hidden = false;
+  } else {
+    ds1.data = []; ds1.hidden = true;
+  }
+
   charts.cumul.update();
-  // Clear stale crosshair immediately so it doesn't linger over new data
   if (cumulState.crossCtx) cumulState.crossCtx.clearRect(0, 0, cumulState.crossCW, cumulState.crossCH);
 
   const sub = document.getElementById('cumulSub');
   if (sub) {
-    const base   = isDebit ? 'Running total of debits' : 'Running total of credits received';
-    const suffix = range === 'all'
-      ? (isDebit ? ' from day 1 — steeper slope = faster burn rate' : ' from day 1')
+    const rangeStr = range === 'all' ? ' from day 1'
       : ` — last ${range === '1w' ? '7' : range === '2w' ? '14' : '30'} days`;
-    sub.textContent = base + suffix;
+    if (isBoth) {
+      sub.textContent = 'Debit vs Credit — cumulative running totals' + rangeStr;
+    } else if (isDebit) {
+      sub.textContent = 'Running total of debits' + (range === 'all' ? ' from day 1 — steeper slope = faster burn rate' : rangeStr);
+    } else {
+      sub.textContent = 'Running total of credits received' + rangeStr;
+    }
   }
 
   applyCumulToggleStyle(mode);
@@ -951,91 +1066,134 @@ window.setCumulRange = function(range) { if (cumulState) updateCumul(cumulState.
 function drawCumulCrosshair(ctx, chart, snapX, snapY, dataIndex, yVal) {
   if (!cumulState?.viewDays) return;
   const { left, right, top, bottom } = chart.chartArea;
-  const d         = cumulState.viewDays[dataIndex];
-  const dotColor  = cumulState.mode === 'debit' ? '#ff5c5c' : '#00c896';
+  const d      = cumulState.viewDays[dataIndex];
+  const isBoth = cumulState.mode === 'both';
 
   ctx.save();
 
-  // ── Vertical hair ─────────────────────────────────────────────────────────
+  // ── Vertical hair (always) ─────────────────────────────────────────────────
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
-  ctx.lineWidth   = 1;
-  ctx.setLineDash([]);
+  ctx.lineWidth   = 1; ctx.setLineDash([]);
   ctx.beginPath(); ctx.moveTo(snapX, top); ctx.lineTo(snapX, bottom); ctx.stroke();
 
-  // ── Horizontal dashed hair ─────────────────────────────────────────────────
-  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-  ctx.lineWidth   = 1;
-  ctx.setLineDash([4, 4]);
-  ctx.beginPath(); ctx.moveTo(left, snapY); ctx.lineTo(right, snapY); ctx.stroke();
-  ctx.setLineDash([]);
+  if (isBoth) {
+    // ── Both mode: two dots, three-row label ──────────────────────────────────
+    const dVal  = cumulState.viewCumulD[dataIndex] ?? 0;
+    const cVal  = cumulState.viewCumulC[dataIndex] ?? 0;
+    const dAmt  = cumulState.viewDailyD[dataIndex] ?? 0;
+    const cAmt  = cumulState.viewDailyC[dataIndex] ?? 0;
+    const dSnapY = chart.scales.y.getPixelForValue(dVal);
+    const cSnapY = chart.scales.y.getPixelForValue(cVal);
 
-  // ── Dot at intersection ────────────────────────────────────────────────────
-  ctx.beginPath();
-  ctx.arc(snapX, snapY, 4.5, 0, Math.PI * 2);
-  ctx.fillStyle   = dotColor;
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.88)';
-  ctx.lineWidth   = 1.5;
-  ctx.stroke();
+    // Debit dot
+    ctx.beginPath(); ctx.arc(snapX, dSnapY, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff5c5c'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.88)'; ctx.lineWidth = 1.5; ctx.stroke();
 
-  // ── Two-line label: cumulative headline + daily context ───────────────────
-  const amtStr  = INR0(yVal);
-  const dateStr = d ? d.getDate() + '/' + (d.getMonth() + 1) : '';
-  const dayAmt  = cumulState.viewDaily[dataIndex] ?? 0;
-  const dayWord = cumulState.mode === 'debit' ? 'spent today' : 'received today';
-  const line1   = amtStr + '  |  ' + dateStr;          // headline: cumulative | date
-  const line2   = '+' + INR0(dayAmt) + ' ' + dayWord;  // context:  daily amount
+    // Credit dot
+    ctx.beginPath(); ctx.arc(snapX, cSnapY, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#00c896'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.88)'; ctx.lineWidth = 1.5; ctx.stroke();
 
-  ctx.font = '600 11px Inter, sans-serif';
-  const tw1 = ctx.measureText(line1).width;
-  ctx.font = '400 10px Inter, sans-serif';
-  const tw2 = ctx.measureText(line2).width;
+    const dateStr = d ? d.getDate() + '/' + (d.getMonth() + 1) : '';
+    const rowD = INR0(dVal) + '  |  +' + INR0(dAmt) + ' spent';
+    const rowC = INR0(cVal) + '  |  +' + INR0(cAmt) + ' received';
 
-  const pad = 8, lh = 33, lw = Math.max(tw1, tw2) + pad * 2;
+    ctx.font = '500 10px Inter, sans-serif';
+    const twD = ctx.measureText(rowD).width;
+    const twC = ctx.measureText(rowC).width;
+    ctx.font = '600 10px Inter, sans-serif';
+    const twDate = ctx.measureText(dateStr).width;
 
-  // Centre on snap X, clamp so it never overflows chart edges
-  let lx = snapX - lw / 2;
-  lx = Math.max(left, Math.min(lx, right - lw));
-  const ly = top + 4; // just inside the top of the chart area
+    const pad = 8, lh = 65, lw = Math.max(twDate, twD + 14, twC + 14) + pad * 2;
+    let lx = snapX - lw / 2;
+    lx = Math.max(left, Math.min(lx, right - lw));
+    const ly = top + 4;
 
-  ctx.fillStyle = 'rgba(18,18,28,0.92)';
-  if (ctx.roundRect) {
-    ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 4); ctx.fill();
-  } else {
-    ctx.fillRect(lx, ly, lw, lh);
-  }
-
-  // Line 1 — cumulative amount + date (bright, bold — the headline)
-  ctx.font         = '600 11px Inter, sans-serif';
-  ctx.fillStyle    = '#e2e2f0';
-  ctx.textAlign    = 'left';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(line1, lx + pad, ly + 11);
-
-  // Line 2 — daily amount (dimmer, lighter weight — supporting context)
-  ctx.font      = '400 10px Inter, sans-serif';
-  ctx.fillStyle = '#7878a0';
-  ctx.fillText(line2, lx + pad, ly + 24);
-
-  // ── Y-axis tick highlight ──────────────────────────────────────────────────
-  const yTick = yVal >= 1000
-    ? '₹' + (yVal / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
-    : INR0(yVal);
-  ctx.font    = '500 10px JetBrains Mono, monospace';
-  const yw = ctx.measureText(yTick).width + 8, yh = 16;
-  const yx = left - yw - 3;
-
-  if (yx >= 0) {
     ctx.fillStyle = 'rgba(18,18,28,0.92)';
-    if (ctx.roundRect) {
-      ctx.beginPath(); ctx.roundRect(yx, snapY - yh / 2, yw, yh, 3); ctx.fill();
-    } else {
-      ctx.fillRect(yx, snapY - yh / 2, yw, yh);
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 4); ctx.fill(); }
+    else { ctx.fillRect(lx, ly, lw, lh); }
+
+    // Row 0 — date
+    ctx.font = '600 10px Inter, sans-serif';
+    ctx.fillStyle = '#9090b8'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(dateStr, lx + pad, ly + 11);
+
+    // Row 1 — debit (red bar + text)
+    ctx.fillStyle = '#ff5c5c';
+    ctx.fillRect(lx + pad, ly + 26, 8, 2);
+    ctx.font = '500 10px Inter, sans-serif'; ctx.fillStyle = '#e2e2f0';
+    ctx.fillText(rowD, lx + pad + 12, ly + 27);
+
+    // Row 2 — credit (green bar + text)
+    ctx.fillStyle = '#00c896';
+    ctx.fillRect(lx + pad, ly + 44, 8, 2);
+    ctx.fillStyle = '#e2e2f0';
+    ctx.fillText(rowC, lx + pad + 12, ly + 45);
+
+    // Y-axis tick for debit value
+    const dTick = dVal >= 1000 ? '₹' + (dVal / 1000).toFixed(1).replace(/\.0$/, '') + 'K' : INR0(dVal);
+    ctx.font = '500 10px JetBrains Mono, monospace';
+    const yw = ctx.measureText(dTick).width + 8, yh = 16, yx = left - yw - 3;
+    if (yx >= 0) {
+      ctx.fillStyle = 'rgba(18,18,28,0.92)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(yx, dSnapY - yh / 2, yw, yh, 3); ctx.fill(); }
+      else { ctx.fillRect(yx, dSnapY - yh / 2, yw, yh); }
+      ctx.fillStyle = '#ff5c5c'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(dTick, yx + yw / 2, dSnapY);
     }
-    ctx.fillStyle    = '#9090b8';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(yTick, yx + yw / 2, snapY);
+
+  } else {
+    // ── Single mode: horizontal hair + dot + two-line label ───────────────────
+    const dotColor = cumulState.mode === 'debit' ? '#ff5c5c' : '#00c896';
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(left, snapY); ctx.lineTo(right, snapY); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.beginPath(); ctx.arc(snapX, snapY, 4.5, 0, Math.PI * 2);
+    ctx.fillStyle = dotColor; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.88)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+    const amtStr  = INR0(yVal);
+    const dateStr = d ? d.getDate() + '/' + (d.getMonth() + 1) : '';
+    const dayAmt  = cumulState.viewDaily[dataIndex] ?? 0;
+    const dayWord = cumulState.mode === 'debit' ? 'spent today' : 'received today';
+    const line1   = amtStr + '  |  ' + dateStr;
+    const line2   = '+' + INR0(dayAmt) + ' ' + dayWord;
+
+    ctx.font = '600 11px Inter, sans-serif';
+    const tw1 = ctx.measureText(line1).width;
+    ctx.font = '400 10px Inter, sans-serif';
+    const tw2 = ctx.measureText(line2).width;
+
+    const pad = 8, lh = 33, lw = Math.max(tw1, tw2) + pad * 2;
+    let lx = snapX - lw / 2;
+    lx = Math.max(left, Math.min(lx, right - lw));
+    const ly = top + 4;
+
+    ctx.fillStyle = 'rgba(18,18,28,0.92)';
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 4); ctx.fill(); }
+    else { ctx.fillRect(lx, ly, lw, lh); }
+
+    ctx.font = '600 11px Inter, sans-serif'; ctx.fillStyle = '#e2e2f0';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(line1, lx + pad, ly + 11);
+    ctx.font = '400 10px Inter, sans-serif'; ctx.fillStyle = '#7878a0';
+    ctx.fillText(line2, lx + pad, ly + 24);
+
+    const yTick = yVal >= 1000
+      ? '₹' + (yVal / 1000).toFixed(1).replace(/\.0$/, '') + 'K'
+      : INR0(yVal);
+    ctx.font = '500 10px JetBrains Mono, monospace';
+    const yw = ctx.measureText(yTick).width + 8, yh = 16, yx = left - yw - 3;
+    if (yx >= 0) {
+      ctx.fillStyle = 'rgba(18,18,28,0.92)';
+      if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(yx, snapY - yh / 2, yw, yh, 3); ctx.fill(); }
+      else { ctx.fillRect(yx, snapY - yh / 2, yw, yh); }
+      ctx.fillStyle = '#9090b8'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(yTick, yx + yw / 2, snapY);
+    }
   }
 
   ctx.restore();
