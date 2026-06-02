@@ -48,13 +48,10 @@ body::before {
   padding: 1.25rem 2rem;
   display: flex; align-items: center;
 }
-.upload-nav-logo { display: flex; align-items: center; gap: 8px; }
-.logo-icon       { flex-shrink: 0; display: block; }
-.logo-wordmark   { display: inline-flex; align-items: baseline; letter-spacing: -0.02em; line-height: 1; }
-.logo-spend      { font-size: 22px; font-weight: 700; color: #f1f5f9; }
-.logo-lens       { font-size: 22px; font-weight: 300; color: #8b5cf6; }
-.logo-wordmark--sm .logo-spend { font-size: 16px; }
-.logo-wordmark--sm .logo-lens  { font-size: 16px; }
+.upload-nav-logo { display: flex; align-items: center; }
+.brand-logo { display: block; height: auto; object-fit: contain; }
+.brand-logo--upload { width: clamp(190px, 16vw, 260px); }
+.brand-logo--topbar { width: 142px; }
 .upload-title {
   font-size: clamp(2.2rem, 5vw, 3.8rem); font-weight: 700; line-height: 1.1;
   text-align: center; margin-bottom: 0.9rem; letter-spacing: -0.02em;
@@ -268,7 +265,7 @@ body::before {
   border-bottom: 1px solid var(--b1); padding: 0 1.75rem;
   height: 56px; display: flex; align-items: center; justify-content: space-between;
 }
-.topbar-logo { display: flex; align-items: center; gap: 8px; }
+.topbar-logo { display: flex; align-items: center; min-width: 142px; }
 .topbar-meta { font-size: 11px; color: var(--t3); font-family: 'JetBrains Mono', monospace; }
 .btn-ghost {
   background: var(--s2); border: 0.5px solid var(--b2); color: var(--t2);
