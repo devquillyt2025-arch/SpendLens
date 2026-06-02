@@ -1,21 +1,17 @@
-<svg width="32" height="32" viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#8b5cf6"/>
-      <stop offset="100%" stop-color="#6d28d9"/>
+    <linearGradient id="p" x1="8" y1="8" x2="58" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8170ff"/>
+      <stop offset="0.5" stop-color="#5a39de"/>
+      <stop offset="1" stop-color="#8f4cff"/>
     </linearGradient>
-    <clipPath id="c">
-      <circle cx="22" cy="22" r="11.5"/>
-    </clipPath>
   </defs>
-  <rect width="44" height="44" rx="11" fill="url(#g)"/>
-  <g clip-path="url(#c)" fill="white" fill-opacity="0.9">
-    <rect x="11" y="22" width="4" height="8"  rx="1"/>
-    <rect x="17" y="16" width="4" height="14" rx="1"/>
-    <rect x="23" y="12" width="4" height="18" rx="1"/>
-    <rect x="29" y="18" width="4" height="12" rx="1"/>
-  </g>
-  <line x1="10" y1="30" x2="34" y2="30" stroke="white" stroke-opacity="0.3" stroke-width="1" clip-path="url(#c)"/>
-  <circle cx="22" cy="22" r="13" stroke="white" stroke-width="2.5"/>
-  <line x1="31.2" y1="31.2" x2="38" y2="38" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="30" cy="30" r="24" fill="url(#p)"/>
+  <circle cx="30" cy="30" r="18" fill="#090912" stroke="#20202a" stroke-width="4"/>
+  <circle cx="30" cy="30" r="15" stroke="#e4e6ff" stroke-width="4.5" stroke-dasharray="48 15" stroke-linecap="round" transform="rotate(-32 30 30)"/>
+  <path d="M22 20h19M22 27h15M22 34h12" stroke="#8c65ff" stroke-width="4" stroke-linecap="round"/>
+  <path d="M24 20c10 0 16 5 16 13 0 8-7 13-16 13h-2l17 13" stroke="#0a0a12" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M24 20c10 0 16 5 16 13 0 8-7 13-16 13h-2l17 13" stroke="#7b55f5" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 47l10 10" stroke="url(#p)" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="30" cy="30" r="24" stroke="#0d0d15" stroke-width="2"/>
 </svg>

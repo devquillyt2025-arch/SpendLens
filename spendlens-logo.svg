@@ -1,0 +1,34 @@
+<svg width="822" height="215" viewBox="0 0 822 215" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="lensPurple" x1="28" y1="26" x2="192" y2="191" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8170ff"/>
+      <stop offset="0.48" stop-color="#5a39de"/>
+      <stop offset="1" stop-color="#8f4cff"/>
+    </linearGradient>
+    <linearGradient id="wordPurple" x1="570" y1="74" x2="815" y2="151" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6268ff"/>
+      <stop offset="1" stop-color="#963cff"/>
+    </linearGradient>
+    <linearGradient id="wordDark" x1="224" y1="72" x2="588" y2="145" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#24242a"/>
+      <stop offset="1" stop-color="#575762"/>
+    </linearGradient>
+    <filter id="softShadow" x="-10%" y="-10%" width="120%" height="130%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="2.2" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#softShadow)">
+    <circle cx="103" cy="105" r="82" fill="url(#lensPurple)"/>
+    <circle cx="103" cy="105" r="64" fill="#090912" stroke="#1e1e28" stroke-width="9"/>
+    <circle cx="103" cy="105" r="54" stroke="#dfe2ff" stroke-width="14" stroke-dasharray="214 62" stroke-linecap="round" transform="rotate(-33 103 105)"/>
+    <path d="M75 69h69M77 91h55M77 113h43" stroke="#8c65ff" stroke-width="12" stroke-linecap="round"/>
+    <path d="M82 70c36 0 55 17 55 43 0 28-23 44-55 44h-8l58 45" stroke="#0b0b13" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M80 70c36 0 55 17 55 43 0 28-23 44-55 44h-8l58 45" stroke="#7b55f5" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M159 163l42 42" stroke="url(#lensPurple)" stroke-width="24" stroke-linecap="round"/>
+    <circle cx="103" cy="105" r="82" stroke="#0d0d15" stroke-width="5"/>
+  </g>
+
+  <text x="225" y="145" fill="url(#wordDark)" font-family="Inter, Arial, Helvetica, sans-serif" font-size="104" font-weight="700" letter-spacing="-3">Spend</text>
+  <text x="565" y="145" fill="url(#wordPurple)" font-family="Inter, Arial, Helvetica, sans-serif" font-size="104" font-weight="700" letter-spacing="-3">Lens</text>
+</svg>
